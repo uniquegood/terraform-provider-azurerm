@@ -4,9 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
+
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/tf"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/resourceid"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
 )
@@ -61,6 +62,28 @@ type Resource interface {
 	// IDValidationFunc returns the SchemaValidateFunc used to validate the ID is valid during
 	// `terraform import` - ensuring users don't inadvertently specify the incorrect Resource ID
 	IDValidationFunc() pluginsdk.SchemaValidateFunc
+}
+
+type ResourceMetaData struct {
+	// Client is a reference to the Azure Providers Client - providing a typed reference to this object
+	Client *clients.Client
+
+	// Logger provides a logger for debug purposes
+	Logger Logger
+
+	// TODO: we should hide ResourceData and ResourceDiff, instead we should be adding `Get{Type}` and `Get{Type}` properties`
+	// this would allow us to switch those functions out conditionally based on either Plugin SDK or Framework being used
+
+	// ResourceData is a reference to the ResourceData object from Terraform's Plugin SDK
+	// This is used to be able to call operations directly should Encode/Decode be insufficient
+	// for example, to determine if a field has changes
+	ResourceData *schema.ResourceData
+
+	// ResourceDiff is a reference to the ResourceDiff object from Terraform's Plugin SDK
+	ResourceDiff *schema.ResourceDiff
+
+	// serializationDebugLogger is used for testing purposes
+	serializationDebugLogger Logger
 }
 
 type ResourceWithStateMigration interface {
@@ -145,25 +168,6 @@ type ResourceFunc struct {
 	// Timeout is the default timeout, which can be overridden by users
 	// for this method - in-turn used for the Azure API
 	Timeout time.Duration
-}
-
-type ResourceMetaData struct {
-	// Client is a reference to the Azure Providers Client - providing a typed reference to this object
-	Client *clients.Client
-
-	// Logger provides a logger for debug purposes
-	Logger Logger
-
-	// ResourceData is a reference to the ResourceData object from Terraform's Plugin SDK
-	// This is used to be able to call operations directly should Encode/Decode be insufficient
-	// for example, to determine if a field has changes
-	ResourceData *schema.ResourceData
-
-	// ResourceDiff is a reference to the ResourceDiff object from Terraform's Plugin SDK
-	ResourceDiff *schema.ResourceDiff
-
-	// serializationDebugLogger is used for testing purposes
-	serializationDebugLogger Logger
 }
 
 // MarkAsGone marks this resource as removed in the Remote API, so this is no longer available
