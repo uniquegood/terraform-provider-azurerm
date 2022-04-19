@@ -5,24 +5,31 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"os"
+
+	"github.com/hashicorp/go-azure-helpers/authentication"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/sdk"
 )
 
-var _ tfsdk.Provider = Provider{}
+var _ tfsdk.Provider = &Provider{}
 
 func AzureProvider() tfsdk.Provider {
-	return Provider{}
+	return &Provider{}
 }
 
 type Provider struct {
+	Client *clients.Client
 }
 
 // GetSchema returns the schema for this provider's configuration. If
 // this provider has no configuration, return an empty schema.Schema.
-func (p Provider) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics) {
+func (p *Provider) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics) {
 	return tfsdk.Schema{
 		Attributes: map[string]tfsdk.Attribute{
 			"subscription_id": {
@@ -180,20 +187,117 @@ func (p Provider) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics
 // Values from provider configuration are often used to initialise an
 // API client, which should be stored on the struct implementing the
 // Provider interface.
-func (p Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderRequest, resp *tfsdk.ConfigureProviderResponse) {
-	// TODO: implement me
+func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderRequest, resp *tfsdk.ConfigureProviderResponse) {
+	builder := &authentication.Builder{
+		// TODO: parse the config
+		SubscriptionID: os.Getenv("ARM_SUBSCRIPTION_ID"),
+		ClientID:       os.Getenv("ARM_CLIENT_ID"),
+		ClientSecret:   os.Getenv("ARM_CLIENT_SECRET"),
+		TenantID:       os.Getenv("ARM_TENANT_ID"),
+		Environment:    "public",
+
+		// Feature Toggles
+		SupportsClientSecretAuth: true,
+
+		// Doc Links
+		ClientSecretDocsLink: "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/service_principal_client_secret",
+
+		// Use MSAL
+		UseMicrosoftGraph: true,
+	}
+
+	config, err := builder.Build()
+	if err != nil {
+		resp.Diagnostics.AddError("internal-error", fmt.Sprintf("building client: %+v", err))
+		return
+	}
+
+	clientBuilder := clients.ClientBuilder{
+		AuthConfig:               config,
+		SkipProviderRegistration: false,
+		TerraformVersion:         "72.0.0",
+		Features:                 expandFeatures([]interface{}{}),
+	}
+
+	client, err := clients.Build(ctx, clientBuilder)
+	if err != nil {
+		resp.Diagnostics.AddError("internal-error", fmt.Sprintf("building client: %+v", err))
+		return
+	}
+
+	p.Client = client
 }
 
 // GetDataSources returns a map of the data source types this provider
 // supports.
-func (p Provider) GetDataSources(ctx context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
-	// TODO: implement me
-	return nil, nil
+func (p *Provider) GetDataSources(ctx context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
+	dataSources := make(map[string]tfsdk.DataSourceType)
+
+	for _, registration := range SupportedTypedServices() {
+		for _, v := range registration.DataSources() {
+			dataSources[v.ResourceType()] = dataSourceTypeWrapper{
+				builder: sdk.NewDataSourceBuilder(v),
+			}
+		}
+	}
+
+	return dataSources, nil
 }
 
 // GetResources returns a map of the resource types this provider
 // supports.
-func (p Provider) GetResources(ctx context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
-	// TODO: implement me
-	return nil, nil
+func (p *Provider) GetResources(ctx context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
+	resources := make(map[string]tfsdk.ResourceType)
+
+	//for _, registration := range SupportedTypedServices() {
+	//	for _, v := range registration.Resources() {
+	//		resources[v.ResourceType()] = resourceTypeWrapper{
+	//			builder: sdk.NewResourceBuilder(v),
+	//		}
+	//	}
+	//}
+
+	return resources, nil
+}
+
+// TODO: below here is boilerplate to workaround circular references in Framework
+
+var _ tfsdk.DataSourceType = dataSourceTypeWrapper{}
+
+type dataSourceTypeWrapper struct {
+	builder sdk.DataSourceBuilderWrapper
+}
+
+func (d dataSourceTypeWrapper) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics) {
+	return d.builder.GetSchema(ctx)
+}
+
+func (d dataSourceTypeWrapper) NewDataSource(ctx context.Context, provider tfsdk.Provider) (tfsdk.DataSource, diag.Diagnostics) {
+	v, ok := provider.(*Provider)
+	if !ok {
+		d := diag.Diagnostics{}
+		d = append(d, diag.NewErrorDiagnostic("internal-error", "provider wasn't configured"))
+	}
+
+	return d.builder.NewDataSource()(ctx, v.Client)
+}
+
+var _ tfsdk.ResourceType = resourceTypeWrapper{}
+
+type resourceTypeWrapper struct {
+	builder sdk.ResourceBuilderWrapper
+}
+
+func (r resourceTypeWrapper) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics) {
+	return r.builder.GetSchema(ctx)
+}
+
+func (r resourceTypeWrapper) NewResource(ctx context.Context, provider tfsdk.Provider) (tfsdk.Resource, diag.Diagnostics) {
+	v, ok := provider.(*Provider)
+	if !ok {
+		d := diag.Diagnostics{}
+		d = append(d, diag.NewErrorDiagnostic("internal-error", "provider wasn't configured"))
+	}
+
+	return r.builder.NewResource()(ctx, v.Client)
 }
