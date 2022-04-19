@@ -100,6 +100,7 @@ import (
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/streamanalytics"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/subscription"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/synapse"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/tombuildsstuff"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/trafficmanager"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/videoanalyzer"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/vmware"
@@ -130,6 +131,7 @@ func SupportedTypedServices() []sdk.TypedServiceRegistration {
 		sentinel.Registration{},
 		servicefabricmanaged.Registration{},
 		streamanalytics.Registration{},
+		tombuildsstuff.Registration{},
 		web.Registration{},
 	}
 }
