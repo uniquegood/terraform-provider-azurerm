@@ -249,13 +249,13 @@ func (p *Provider) GetDataSources(ctx context.Context) (map[string]tfsdk.DataSou
 func (p *Provider) GetResources(ctx context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
 	resources := make(map[string]tfsdk.ResourceType)
 
-	//for _, registration := range SupportedTypedServices() {
-	//	for _, v := range registration.Resources() {
-	//		resources[v.ResourceType()] = resourceTypeWrapper{
-	//			builder: sdk.NewResourceBuilder(v),
-	//		}
-	//	}
-	//}
+	for _, registration := range SupportedTypedServices() {
+		for _, v := range registration.Resources() {
+			resources[v.ResourceType()] = resourceTypeWrapper{
+				builder: sdk.NewResourceBuilder(v),
+			}
+		}
+	}
 
 	return resources, nil
 }
