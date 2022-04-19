@@ -77,7 +77,7 @@ type ResourceMetaData struct {
 	// ResourceData is a reference to the ResourceData object from Terraform's Plugin SDK
 	// This is used to be able to call operations directly should Encode/Decode be insufficient
 	// for example, to determine if a field has changes
-	ResourceData *schema.ResourceData
+	ResourceData ResourceData
 
 	// ResourceDiff is a reference to the ResourceDiff object from Terraform's Plugin SDK
 	ResourceDiff *schema.ResourceDiff
