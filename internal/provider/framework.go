@@ -215,7 +215,7 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 	clientBuilder := clients.ClientBuilder{
 		AuthConfig:               config,
 		SkipProviderRegistration: false,
-		TerraformVersion:         "72.0.0",
+		TerraformVersion:         req.TerraformVersion,
 		Features:                 expandFeatures([]interface{}{}),
 	}
 
@@ -230,7 +230,7 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 
 // GetDataSources returns a map of the data source types this provider
 // supports.
-func (p *Provider) GetDataSources(ctx context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
+func (p *Provider) GetDataSources(_ context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
 	dataSources := make(map[string]tfsdk.DataSourceType)
 
 	for _, registration := range SupportedTypedServices() {
@@ -246,7 +246,7 @@ func (p *Provider) GetDataSources(ctx context.Context) (map[string]tfsdk.DataSou
 
 // GetResources returns a map of the resource types this provider
 // supports.
-func (p *Provider) GetResources(ctx context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
+func (p *Provider) GetResources(_ context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
 	resources := make(map[string]tfsdk.ResourceType)
 
 	for _, registration := range SupportedTypedServices() {

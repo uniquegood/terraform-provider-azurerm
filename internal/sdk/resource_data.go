@@ -1,7 +1,5 @@
 package sdk
 
-import "time"
-
 type ResourceData interface {
 	// Get returns a value from either the config/state depending on where this is called
 	// in Create and Update functions this will return from the config
@@ -9,22 +7,17 @@ type ResourceData interface {
 	// NOTE: this should not be called from Delete functions.
 	Get(key string) interface{}
 
-	// GetChange returns the original and updated value, which can be useful in Update functions
-	GetChange(key string) (original interface{}, updated interface{})
+	GetFromConfig(key string) interface{}
 
-	// GetValue returns the value for this key, alongside a boolean determining whether
-	// this field was set in the config
-	GetValue(key string) (value interface{}, isSet bool)
-
-	GetRawValue(key string) (value interface{}, isSet bool)
+	GetFromState(key string) interface{}
 
 	HasChange(key string) bool
 
-	HasChanges(keys ...string) bool
+	HasChanges(keys []string) bool
 
 	Id() string
 
-	IsNewResource() bool
+	// NOTE: this intentionally doesn't implement IsNewResource since we should be splitting Create and Update methods
 
 	Set(key string, value interface{}) error
 
@@ -32,17 +25,7 @@ type ResourceData interface {
 
 	SetId(id string)
 
-	Timeout(key string) time.Duration
-
 	// TODO: add Get/Set helpers for each type
 
 	//GetString(key string) * string
-
-	// TODO: remove below here, just here to enable a seamless migration
-
-	// Deprecated: use GetValue
-	GetOk(key string) (interface{}, bool)
-
-	// Deprecated: use GetRawValue
-	GetOkExists(key string) (interface{}, bool)
 }

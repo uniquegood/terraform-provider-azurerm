@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -16,41 +15,82 @@ import (
 var _ ResourceData = &FrameworkResourceData{}
 
 type FrameworkResourceData struct {
-	ctx    context.Context
-	schema tfsdk.Schema
-	state  *tfsdk.State
+	ctx   context.Context
+	state *tfsdk.State
+
+	// config is the user-specified config, which isn't guaranteed to be available
+	config *tfsdk.Config
+
+	// plan is the difference between the old state and the new state
+	plan *tfsdk.Plan
 }
 
-func NewFrameworkResourceData(ctx context.Context, schema tfsdk.Schema, state *tfsdk.State) *FrameworkResourceData {
+func NewFrameworkResourceData(ctx context.Context, state *tfsdk.State) *FrameworkResourceData {
 	return &FrameworkResourceData{
-		ctx:    ctx,
-		state:  state,
-		schema: schema,
+		ctx:   ctx,
+		state: state,
 	}
 }
 
-// resp.State.SetAttribute(ctx, tftypes.NewAttributePath().WithAttributeName("blah"), "somevalue")
-// data.Id = types.String{Value: "example-id"}
+// WithConfig adds the user-provided config to the ResourceData
+func (f *FrameworkResourceData) WithConfig(config tfsdk.Config) {
+	f.config = &config
+}
 
-// resp.State.RemoveResource(ctx)
+// WithExistingID sets an existing known Resource ID into the state
+func (f *FrameworkResourceData) WithExistingID(id string) {
+	// TODO: should this be setting a local variable rather than setting it into the state?
+	f.SetId(id)
+}
+
+// WithExistingState ...
+func (f *FrameworkResourceData) WithExistingState(state tfsdk.State) {
+	// TODO: implement me
+}
+
+// WithPlan sets an existing known Plan
+func (f *FrameworkResourceData) WithPlan(plan tfsdk.Plan) {
+	f.plan = &plan
+}
 
 func (f *FrameworkResourceData) Get(key string) interface{} {
 	var out interface{}
-	f.state.GetAttribute(f.ctx, tftypes.NewAttributePath().WithAttributeName(key), out)
+	path := flatMapToAttributePath(key)
+	f.state.GetAttribute(f.ctx, path, out)
 	return out
 }
 
-func (f *FrameworkResourceData) GetChange(key string) (original interface{}, updated interface{}) {
+//
+//func (f *FrameworkResourceData) GetChange(key string) (original interface{}, updated interface{}) {
+//	path := flatMapToAttributePath(key)
+//	if f.plan != nil {
+//		var oldVal interface{}
+//		diag := f.plan.GetAttribute(f.ctx, path, &oldVal)
+//		if diag == nil {
+//			original = oldVal
+//		}
+//	} else if f.state != nil {
+//		var oldVal interface{}
+//		diag := f.state.GetAttribute(f.ctx, path, &oldVal)
+//		if diag == nil {
+//			original = oldVal
+//		}
+//	}
+//
+//	var newVal interface{}
+//	diag := f.config.GetAttribute(f.ctx, path, &newVal)
+//	if diag == nil {
+//		updated = newVal
+//	}
+//	return
+//}
+
+func (f *FrameworkResourceData) GetFromConfig(key string) interface{} {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (f *FrameworkResourceData) GetValue(key string) (value interface{}, isSet bool) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *FrameworkResourceData) GetRawValue(key string) (value interface{}, isSet bool) {
+func (f *FrameworkResourceData) GetFromState(key string) interface{} {
 	//TODO implement me
 	panic("implement me")
 }
@@ -60,19 +100,18 @@ func (f *FrameworkResourceData) HasChange(key string) bool {
 	panic("implement me")
 }
 
-func (f *FrameworkResourceData) HasChanges(keys ...string) bool {
-	//TODO implement me
-	panic("implement me")
+func (f *FrameworkResourceData) HasChanges(keys []string) bool {
+	for _, k := range keys {
+		if f.HasChange(k) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (f *FrameworkResourceData) Id() string {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *FrameworkResourceData) IsNewResource() bool {
-	// TODO: implement me
-	return false
+	return f.Get("id").(string)
 }
 
 func (f *FrameworkResourceData) Set(key string, value interface{}) error {
@@ -96,23 +135,13 @@ func (f *FrameworkResourceData) SetConnInfo(v map[string]string) {
 
 func (f *FrameworkResourceData) SetId(id string) {
 	if id == "" {
-		f.state.RemoveResource(context.TODO())
+		f.state.RemoveResource(f.ctx)
 	} else {
 		f.Set("id", id)
 	}
 }
 
-func (f *FrameworkResourceData) Timeout(key string) time.Duration {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *FrameworkResourceData) GetOk(key string) (interface{}, bool) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *FrameworkResourceData) GetOkExists(key string) (interface{}, bool) {
-	//TODO implement me
-	panic("implement me")
+func flatMapToAttributePath(key string) *tftypes.AttributePath {
+	// TODO: implement this properly
+	return tftypes.NewAttributePath().WithAttributeName(key)
 }

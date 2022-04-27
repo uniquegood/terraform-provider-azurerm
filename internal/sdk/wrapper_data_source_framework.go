@@ -79,7 +79,8 @@ type dataSourceWrapper struct {
 func (d dataSourceWrapper) Read(ctx context.Context, request tfsdk.ReadDataSourceRequest, response *tfsdk.ReadDataSourceResponse) {
 	f := d.typedDataSource.Read()
 
-	resourceData := NewFrameworkResourceData(ctx, request.Config.Schema, &response.State)
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithConfig(request.Config)
 	err := f.Func(ctx, ResourceMetaData{
 		Client:                   d.client,
 		Logger:                   NullLogger{},
@@ -88,7 +89,7 @@ func (d dataSourceWrapper) Read(ctx context.Context, request tfsdk.ReadDataSourc
 		serializationDebugLogger: nil,
 	})
 	if err != nil {
-		response.Diagnostics.AddError("peforming read", err.Error())
+		response.Diagnostics.AddError("performing read", err.Error())
 		return
 	}
 

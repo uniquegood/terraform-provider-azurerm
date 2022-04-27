@@ -84,26 +84,118 @@ type resourceWrapper struct {
 }
 
 func (r resourceWrapper) Create(ctx context.Context, request tfsdk.CreateResourceRequest, response *tfsdk.CreateResourceResponse) {
-	//TODO implement me
-	panic("implement me")
+	f := r.typedResource.Create()
+
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithConfig(request.Config)
+	resourceData.WithPlan(request.Plan)
+	err := f.Func(ctx, ResourceMetaData{
+		Client:                   r.client,
+		Logger:                   NullLogger{},
+		ResourceData:             resourceData,
+		ResourceDiff:             nil,
+		serializationDebugLogger: nil,
+	})
+	if err != nil {
+		response.Diagnostics.AddError("performing create", err.Error())
+		return
+	}
+
+	response.State = *resourceData.state
 }
 
 func (r resourceWrapper) Read(ctx context.Context, request tfsdk.ReadResourceRequest, response *tfsdk.ReadResourceResponse) {
-	//TODO implement me
-	panic("implement me")
+	f := r.typedResource.Read()
+
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithExistingState(request.State)
+	err := f.Func(ctx, ResourceMetaData{
+		Client:                   r.client,
+		Logger:                   NullLogger{},
+		ResourceData:             resourceData,
+		ResourceDiff:             nil,
+		serializationDebugLogger: nil,
+	})
+	if err != nil {
+		response.Diagnostics.AddError("performing read", err.Error())
+		return
+	}
+
+	response.State = *resourceData.state
 }
 
 func (r resourceWrapper) Update(ctx context.Context, request tfsdk.UpdateResourceRequest, response *tfsdk.UpdateResourceResponse) {
-	//TODO implement me
-	panic("implement me")
+	rwu, ok := r.typedResource.(ResourceWithUpdate)
+	if !ok {
+		response.Diagnostics.AddError("doesn't support update", "this resource does not support update")
+		return
+	}
+
+	f := rwu.Update()
+
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithConfig(request.Config)
+	resourceData.WithExistingState(request.State)
+	resourceData.WithPlan(request.Plan)
+	err := f.Func(ctx, ResourceMetaData{
+		Client:                   r.client,
+		Logger:                   NullLogger{},
+		ResourceData:             resourceData,
+		ResourceDiff:             nil,
+		serializationDebugLogger: nil,
+	})
+	if err != nil {
+		response.Diagnostics.AddError("performing update", err.Error())
+		return
+	}
+
+	response.State = *resourceData.state
 }
 
 func (r resourceWrapper) Delete(ctx context.Context, request tfsdk.DeleteResourceRequest, response *tfsdk.DeleteResourceResponse) {
-	//TODO implement me
-	panic("implement me")
+	f := r.typedResource.Delete()
+
+	// TODO: note the request doesn't define the config for the schema here, but it should
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithExistingState(request.State)
+	err := f.Func(ctx, ResourceMetaData{
+		Client:                   r.client,
+		Logger:                   NullLogger{},
+		ResourceData:             resourceData,
+		ResourceDiff:             nil,
+		serializationDebugLogger: nil,
+	})
+	if err != nil {
+		response.Diagnostics.AddError("performing delete", err.Error())
+		return
+	}
+
+	response.State = *resourceData.state
 }
 
 func (r resourceWrapper) ImportState(ctx context.Context, request tfsdk.ImportResourceStateRequest, response *tfsdk.ImportResourceStateResponse) {
-	//TODO implement me
-	panic("implement me")
+	rwi, ok := r.typedResource.(ResourceWithCustomImporter)
+	if !ok {
+		// TODO: should this be ResourceImportStateNotImplemented?
+		response.Diagnostics.AddError("doesn't support import", "this resource doesn't support import")
+		return
+	}
+
+	f := rwi.CustomImporter()
+
+	resourceData := NewFrameworkResourceData(ctx, &response.State)
+	resourceData.WithExistingID(request.ID)
+	err := f(ctx, ResourceMetaData{
+		Client:                   r.client,
+		Logger:                   NullLogger{},
+		ResourceData:             resourceData,
+		ResourceDiff:             nil,
+		serializationDebugLogger: nil,
+	})
+	if err != nil {
+		response.Diagnostics.AddError("performing delete", err.Error())
+		return
+	}
+
+	response.State = *resourceData.state
 }

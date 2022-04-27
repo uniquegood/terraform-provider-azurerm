@@ -4,8 +4,6 @@
 package sdk
 
 import (
-	"time"
-
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
 )
 
@@ -29,32 +27,26 @@ func (p *PluginSdkResourceData) Get(key string) interface{} {
 	return p.resourceData.Get(key)
 }
 
-func (p *PluginSdkResourceData) GetChange(key string) (interface{}, interface{}) {
-	return p.resourceData.GetChange(key)
+func (p *PluginSdkResourceData) GetFromConfig(key string) interface{} {
+	//p.resourceData.GetRawConfig()
+	panic("not implemented")
 }
 
-func (p *PluginSdkResourceData) GetRawValue(key string) (interface{}, bool) {
-	return p.resourceData.GetOkExists(key)
-}
-
-func (p *PluginSdkResourceData) GetValue(key string) (interface{}, bool) {
-	return p.resourceData.GetOk(key)
+func (p *PluginSdkResourceData) GetFromState(key string) interface{} {
+	// p.resourceData.GetRawState()
+	panic("not implemented")
 }
 
 func (p *PluginSdkResourceData) HasChange(key string) bool {
 	return p.resourceData.HasChange(key)
 }
 
-func (p *PluginSdkResourceData) HasChanges(keys ...string) bool {
+func (p *PluginSdkResourceData) HasChanges(keys []string) bool {
 	return p.resourceData.HasChanges(keys...)
 }
 
 func (p *PluginSdkResourceData) Id() string {
 	return p.resourceData.Id()
-}
-
-func (p *PluginSdkResourceData) IsNewResource() bool {
-	return p.resourceData.IsNewResource()
 }
 
 func (p *PluginSdkResourceData) Set(key string, value interface{}) error {
@@ -67,18 +59,4 @@ func (p *PluginSdkResourceData) SetConnInfo(input map[string]string) {
 
 func (p *PluginSdkResourceData) SetId(id string) {
 	p.resourceData.SetId(id)
-}
-
-func (p PluginSdkResourceData) Timeout(key string) time.Duration {
-	return p.resourceData.Timeout(key)
-}
-
-// TODO: remove below here - these are just for compatibility whilst we migrate across to the wrapper
-
-func (p *PluginSdkResourceData) GetOk(key string) (interface{}, bool) {
-	return p.resourceData.GetOk(key)
-}
-
-func (p *PluginSdkResourceData) GetOkExists(key string) (interface{}, bool) {
-	return p.resourceData.GetOkExists(key)
 }
