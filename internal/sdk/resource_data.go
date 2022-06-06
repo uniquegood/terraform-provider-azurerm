@@ -7,6 +7,10 @@ type ResourceData interface {
 	// NOTE: this should not be called from Delete functions.
 	Get(key string) interface{}
 
+	GetOk(key string) (interface{}, bool)
+
+	GetOkExists(key string) (interface{}, bool)
+
 	GetFromConfig(key string) interface{}
 
 	GetFromState(key string) interface{}

@@ -13,6 +13,14 @@ type PluginSdkResourceData struct {
 	resourceData *pluginsdk.ResourceData
 }
 
+func (p *PluginSdkResourceData) GetOk(key string) (interface{}, bool) {
+	return p.resourceData.GetOk(key)
+}
+
+func (p *PluginSdkResourceData) GetOkExists(key string) (interface{}, bool) {
+	return p.resourceData.GetOkExists(key)
+}
+
 func NewPluginSdkResourceData(d *pluginsdk.ResourceData) *PluginSdkResourceData {
 	return &PluginSdkResourceData{
 		resourceData: d,
