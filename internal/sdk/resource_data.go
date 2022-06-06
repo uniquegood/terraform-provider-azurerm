@@ -15,13 +15,18 @@ type ResourceData interface {
 
 	GetFromState(key string) interface{}
 
+	GetChange(key string) (interface{}, interface{})
+
 	HasChange(key string) bool
 
-	HasChanges(keys []string) bool
+	HasChanges(keys ...string) bool
+
+	HasChangesExcept(keys ...string) bool
 
 	Id() string
 
 	// NOTE: this intentionally doesn't implement IsNewResource since we should be splitting Create and Update methods
+	IsNewResource() bool // TODO - Remove this temp support
 
 	Set(key string, value interface{}) error
 

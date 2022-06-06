@@ -13,12 +13,21 @@ type PluginSdkResourceData struct {
 	resourceData *pluginsdk.ResourceData
 }
 
+// IsNewResource TODO Remove this
+func (p *PluginSdkResourceData) IsNewResource() bool {
+	return p.resourceData.IsNewResource()
+}
+
 func (p *PluginSdkResourceData) GetOk(key string) (interface{}, bool) {
 	return p.resourceData.GetOk(key)
 }
 
 func (p *PluginSdkResourceData) GetOkExists(key string) (interface{}, bool) {
 	return p.resourceData.GetOkExists(key)
+}
+
+func (p *PluginSdkResourceData) GetChange(key string) (interface{}, interface{}) {
+	return p.resourceData.GetChange(key)
 }
 
 func NewPluginSdkResourceData(d *pluginsdk.ResourceData) *PluginSdkResourceData {
@@ -36,7 +45,7 @@ func (p *PluginSdkResourceData) Get(key string) interface{} {
 }
 
 func (p *PluginSdkResourceData) GetFromConfig(key string) interface{} {
-	//p.resourceData.GetRawConfig()
+	// p.resourceData.GetRawConfig()
 	panic("not implemented")
 }
 
@@ -49,8 +58,12 @@ func (p *PluginSdkResourceData) HasChange(key string) bool {
 	return p.resourceData.HasChange(key)
 }
 
-func (p *PluginSdkResourceData) HasChanges(keys []string) bool {
+func (p *PluginSdkResourceData) HasChanges(keys ...string) bool {
 	return p.resourceData.HasChanges(keys...)
+}
+
+func (p *PluginSdkResourceData) HasChangesExcept(keys ...string) bool {
+	return p.resourceData.HasChangesExcept()
 }
 
 func (p *PluginSdkResourceData) Id() string {
