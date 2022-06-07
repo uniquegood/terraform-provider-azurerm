@@ -245,9 +245,6 @@ func (k ClusterResource) Create() sdk.ResourceFunc {
 			if err := metadata.Decode(&model); err != nil {
 				return fmt.Errorf("decoding %+v", err)
 			}
-			ctx, cancel := timeouts.ForCreate(ctx, metadata.ResourceData)
-			defer cancel()
-
 			clusterClient := metadata.Client.ServiceFabricManaged.ManagedClusterClient
 			nodeTypeClient := metadata.Client.ServiceFabricManaged.NodeTypeClient
 
@@ -436,8 +433,6 @@ func (k ClusterResource) Update() sdk.ResourceFunc {
 			if err := metadata.Decode(&model); err != nil {
 				return fmt.Errorf("decoding %+v", err)
 			}
-			ctx, cancel := timeouts.ForCreate(ctx, metadata.ResourceData)
-			defer cancel()
 
 			clusterClient := metadata.Client.ServiceFabricManaged.ManagedClusterClient
 			nodeTypeClient := metadata.Client.ServiceFabricManaged.NodeTypeClient
