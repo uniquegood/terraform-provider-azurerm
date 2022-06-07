@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
@@ -23,6 +24,47 @@ type FrameworkResourceData struct {
 
 	// plan is the difference between the old state and the new state
 	plan *tfsdk.Plan
+}
+
+func (f *FrameworkResourceData) GetOk(key string) (interface{}, bool) {
+	var out interface{}
+	path := flatMapToAttributePath(key)
+	f.state.GetAttribute(f.ctx, path, out)
+	return out, out != nil
+}
+
+func (f *FrameworkResourceData) GetOkExists(key string) (interface{}, bool) {
+	var out interface{}
+	path := flatMapToAttributePath(key)
+	f.state.GetAttribute(f.ctx, path, out)
+	return out, out != nil
+}
+
+func (f *FrameworkResourceData) HasChangesExcept(keys ...string) bool {
+	if f == nil || f.plan == nil {
+		return false
+	}
+	var state interface{}
+	f.plan.Get(f.ctx, state)
+
+	plan := state.(tfsdk.Plan)
+
+	for attr := range plan.Schema.Attributes {
+		rootAttr := strings.Split(attr, ".")[0]
+		var skipAttr bool
+
+		for _, key := range keys {
+			if rootAttr == key {
+				skipAttr = true
+				break
+			}
+		}
+		if !skipAttr && f.HasChange(rootAttr) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func NewFrameworkResourceData(ctx context.Context, state *tfsdk.State) *FrameworkResourceData {
@@ -45,7 +87,8 @@ func (f *FrameworkResourceData) WithExistingID(id string) {
 
 // WithExistingState ...
 func (f *FrameworkResourceData) WithExistingState(state tfsdk.State) {
-	// TODO: implement me
+	// TODO: is this just as simple as setting the passed in state?
+	f.state = &state
 }
 
 // WithPlan sets an existing known Plan
@@ -60,47 +103,46 @@ func (f *FrameworkResourceData) Get(key string) interface{} {
 	return out
 }
 
-//
-//func (f *FrameworkResourceData) GetChange(key string) (original interface{}, updated interface{}) {
-//	path := flatMapToAttributePath(key)
-//	if f.plan != nil {
-//		var oldVal interface{}
-//		diag := f.plan.GetAttribute(f.ctx, path, &oldVal)
-//		if diag == nil {
-//			original = oldVal
-//		}
-//	} else if f.state != nil {
-//		var oldVal interface{}
-//		diag := f.state.GetAttribute(f.ctx, path, &oldVal)
-//		if diag == nil {
-//			original = oldVal
-//		}
-//	}
-//
-//	var newVal interface{}
-//	diag := f.config.GetAttribute(f.ctx, path, &newVal)
-//	if diag == nil {
-//		updated = newVal
-//	}
-//	return
-//}
+func (f *FrameworkResourceData) GetChange(key string) (original interface{}, updated interface{}) {
+	path := flatMapToAttributePath(key)
+	var oldVal interface{}
+	if f.plan != nil {
+		diag := f.plan.GetAttribute(f.ctx, path, &oldVal)
+		if diag == nil {
+			original = oldVal
+		}
+	} else if f.state != nil {
+		diag := f.state.GetAttribute(f.ctx, path, &oldVal)
+		if diag == nil {
+			original = oldVal
+		}
+	}
+
+	var newVal interface{}
+	diag := f.config.GetAttribute(f.ctx, path, &newVal)
+	if diag == nil {
+		updated = newVal
+	}
+	return
+}
 
 func (f *FrameworkResourceData) GetFromConfig(key string) interface{} {
-	//TODO implement me
-	panic("implement me")
+	var out interface{}
+	path := flatMapToAttributePath(key)
+	f.config.GetAttribute(f.ctx, path, out)
+	return out
 }
 
 func (f *FrameworkResourceData) GetFromState(key string) interface{} {
-	//TODO implement me
-	panic("implement me")
+	return f.Get(key)
 }
 
 func (f *FrameworkResourceData) HasChange(key string) bool {
-	//TODO implement me
-	panic("implement me")
+	n, o := f.GetChange(key)
+	return !cmp.Equal(n, o)
 }
 
-func (f *FrameworkResourceData) HasChanges(keys []string) bool {
+func (f *FrameworkResourceData) HasChanges(keys ...string) bool {
 	for _, k := range keys {
 		if f.HasChange(k) {
 			return true
