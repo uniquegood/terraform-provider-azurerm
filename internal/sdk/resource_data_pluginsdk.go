@@ -13,11 +13,6 @@ type PluginSdkResourceData struct {
 	resourceData *pluginsdk.ResourceData
 }
 
-// IsNewResource TODO Remove this
-func (p *PluginSdkResourceData) IsNewResource() bool {
-	return p.resourceData.IsNewResource()
-}
-
 func (p *PluginSdkResourceData) GetOk(key string) (interface{}, bool) {
 	return p.resourceData.GetOk(key)
 }
