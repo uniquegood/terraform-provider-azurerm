@@ -3,6 +3,8 @@ package provider
 import (
 	"os"
 
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/features"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
@@ -398,4 +400,22 @@ func expandFeatures(input []interface{}) features.UserFeatures {
 	}
 
 	return featuresMap
+}
+
+func schemaFeaturesAttributes() tfsdk.Attribute {
+	return tfsdk.Attribute{
+		Attributes: tfsdk.MapNestedAttributes(map[string]tfsdk.Attribute{
+			"resource_group": {
+				Optional: true,
+				Attributes: tfsdk.MapNestedAttributes(map[string]tfsdk.Attribute{
+					"prevent_deletion_if_contains_resources": {
+						Type:     types.BoolType,
+						Optional: true,
+					},
+				}, tfsdk.MapNestedAttributesOptions{}),
+			},
+		}, tfsdk.MapNestedAttributesOptions{}),
+		Required:    true,
+		Description: "The features map allows control of Azure features and behaviours within the provider.",
+	}
 }

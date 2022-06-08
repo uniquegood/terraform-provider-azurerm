@@ -152,8 +152,8 @@ func (p *Provider) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostic
 				Description: "This will disable the Terraform Partner ID which is used if a custom `partner_id` isn't specified.",
 			},
 
-			// TODO: `features` is a block
-			//"features": schemaFeatures(supportLegacyTestSuite),
+			// TODO: Should `features` remain a block?
+			"features": schemaFeaturesAttributes(),
 
 			// Advanced feature flags
 			"skip_provider_registration": {
@@ -195,6 +195,7 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 		ClientSecret:   os.Getenv("ARM_CLIENT_SECRET"),
 		TenantID:       os.Getenv("ARM_TENANT_ID"),
 		Environment:    "public",
+		MetadataHost:   "",
 
 		// Feature Toggles
 		SupportsClientSecretAuth: true,

@@ -1,4 +1,4 @@
-package tfsdk
+package proto6server
 
 import (
 	"context"
@@ -8,58 +8,29 @@ import (
 	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/internal/fromproto6"
+	"github.com/hashicorp/terraform-plugin-framework/internal/fwserver"
+	"github.com/hashicorp/terraform-plugin-framework/internal/logging"
 	"github.com/hashicorp/terraform-plugin-framework/internal/proto6"
+	"github.com/hashicorp/terraform-plugin-framework/internal/toproto6"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-go/tfprotov6/tf6server"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-	"github.com/hashicorp/terraform-plugin-log/tfsdklog"
 )
 
-var _ tfprotov6.ProviderServer = &server{}
+var _ tfprotov6.ProviderServer = &Server{}
 
-type server struct {
-	p                Provider
+// Provider server implementation.
+type Server struct {
+	FrameworkServer fwserver.Server
+
+	// Provider will be migrated to FrameworkServer over time.
+	Provider         tfsdk.Provider
 	contextCancels   []context.CancelFunc
 	contextCancelsMu sync.Mutex
 }
 
-// ServeOpts are options for serving the provider.
-type ServeOpts struct {
-	// Name is the name of the provider, in full address form. For example:
-	// registry.terraform.io/hashicorp/random.
-	Name string
-
-	// Debug runs the provider in a mode acceptable for debugging and testing
-	// processes, such as delve, by managing the process lifecycle. Information
-	// needed for Terraform CLI to connect to the provider is output to stdout.
-	// os.Interrupt (Ctrl-c) can be used to stop the provider.
-	Debug bool
-}
-
-// NewProtocol6Server returns a tfprotov6.ProviderServer implementation based
-// on the passed Provider implementation.
-func NewProtocol6Server(p Provider) tfprotov6.ProviderServer {
-	return &server{
-		p: p,
-	}
-}
-
-// Serve serves a provider, blocking until the context is canceled.
-func Serve(ctx context.Context, providerFunc func() Provider, opts ServeOpts) error {
-	var tf6serverOpts []tf6server.ServeOpt
-
-	if opts.Debug {
-		tf6serverOpts = append(tf6serverOpts, tf6server.WithManagedDebug())
-	}
-
-	return tf6server.Serve(opts.Name, func() tfprotov6.ProviderServer {
-		return &server{
-			p: providerFunc(),
-		}
-	}, tf6serverOpts...)
-}
-
-func (s *server) registerContext(in context.Context) context.Context {
+func (s *Server) registerContext(in context.Context) context.Context {
 	ctx, cancel := context.WithCancel(in)
 	s.contextCancelsMu.Lock()
 	defer s.contextCancelsMu.Unlock()
@@ -67,7 +38,7 @@ func (s *server) registerContext(in context.Context) context.Context {
 	return ctx
 }
 
-func (s *server) cancelRegisteredContexts(_ context.Context) {
+func (s *Server) cancelRegisteredContexts(_ context.Context) {
 	s.contextCancelsMu.Lock()
 	defer s.contextCancelsMu.Unlock()
 	for _, cancel := range s.contextCancels {
@@ -76,8 +47,12 @@ func (s *server) cancelRegisteredContexts(_ context.Context) {
 	s.contextCancels = nil
 }
 
-func (s *server) getResourceType(ctx context.Context, typ string) (ResourceType, diag.Diagnostics) {
-	resourceTypes, diags := s.p.GetResources(ctx)
+func (s *Server) getResourceType(ctx context.Context, typ string) (tfsdk.ResourceType, diag.Diagnostics) {
+	// TODO: Cache GetResources call in GetProviderSchema and reference cache instead
+	// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/299
+	logging.FrameworkDebug(ctx, "Calling provider defined Provider GetResources")
+	resourceTypes, diags := s.Provider.GetResources(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined Provider GetResources")
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -92,8 +67,12 @@ func (s *server) getResourceType(ctx context.Context, typ string) (ResourceType,
 	return resourceType, diags
 }
 
-func (s *server) getDataSourceType(ctx context.Context, typ string) (DataSourceType, diag.Diagnostics) {
-	dataSourceTypes, diags := s.p.GetDataSources(ctx)
+func (s *Server) getDataSourceType(ctx context.Context, typ string) (tfsdk.DataSourceType, diag.Diagnostics) {
+	// TODO: Cache GetDataSources call in GetProviderSchema and reference cache instead
+	// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/299
+	logging.FrameworkDebug(ctx, "Calling provider defined Provider GetDataSources")
+	dataSourceTypes, diags := s.Provider.GetDataSources(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined Provider GetDataSources")
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -108,131 +87,16 @@ func (s *server) getDataSourceType(ctx context.Context, typ string) (DataSourceT
 	return dataSourceType, diags
 }
 
-// getProviderSchemaResponse is a thin abstraction to allow native Diagnostics usage
-type getProviderSchemaResponse struct {
-	Provider          *tfprotov6.Schema
-	ProviderMeta      *tfprotov6.Schema
-	ResourceSchemas   map[string]*tfprotov6.Schema
-	DataSourceSchemas map[string]*tfprotov6.Schema
-	Diagnostics       diag.Diagnostics
-}
-
-func (r getProviderSchemaResponse) toTfprotov6() *tfprotov6.GetProviderSchemaResponse {
-	return &tfprotov6.GetProviderSchemaResponse{
-		Provider:          r.Provider,
-		ProviderMeta:      r.ProviderMeta,
-		ResourceSchemas:   r.ResourceSchemas,
-		DataSourceSchemas: r.DataSourceSchemas,
-		Diagnostics:       r.Diagnostics.ToTfprotov6Diagnostics(),
-	}
-}
-
-func (s *server) GetProviderSchema(ctx context.Context, _ *tfprotov6.GetProviderSchemaRequest) (*tfprotov6.GetProviderSchemaResponse, error) {
+func (s *Server) GetProviderSchema(ctx context.Context, req *tfprotov6.GetProviderSchemaRequest) (*tfprotov6.GetProviderSchemaResponse, error) {
 	ctx = s.registerContext(ctx)
-	resp := new(getProviderSchemaResponse)
+	ctx = logging.InitContext(ctx)
 
-	s.getProviderSchema(ctx, resp)
+	fwReq := fromproto6.GetProviderSchemaRequest(ctx, req)
+	fwResp := &fwserver.GetProviderSchemaResponse{}
 
-	return resp.toTfprotov6(), nil
-}
+	s.FrameworkServer.GetProviderSchema(ctx, fwReq, fwResp)
 
-func (s *server) getProviderSchema(ctx context.Context, resp *getProviderSchemaResponse) {
-	// get the provider schema
-	providerSchema, diags := s.p.GetSchema(ctx)
-	resp.Diagnostics.Append(diags...)
-	if diags.HasError() {
-		return
-	}
-	// convert the provider schema to a *tfprotov6.Schema
-	provider6Schema, err := providerSchema.tfprotov6Schema(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error converting provider schema",
-			"The provider schema couldn't be converted into a usable type. This is always a problem with the provider. Please report the following to the provider developer:\n\n"+err.Error(),
-		)
-		return
-	}
-
-	// don't set the schema on the response yet, we want it to be able to
-	// accrue warning diagnostics and return them on the first error
-	// diagnostic without returning a partial schema, so we need to wait
-	// until the very end to set the schemas on the response
-
-	// if we have a provider_meta schema, get it
-	var providerMeta6Schema *tfprotov6.Schema
-	if pm, ok := s.p.(ProviderWithProviderMeta); ok {
-		providerMetaSchema, diags := pm.GetMetaSchema(ctx)
-
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		pm6Schema, err := providerMetaSchema.tfprotov6Schema(ctx)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error converting provider_meta schema",
-				"The provider_meta schema couldn't be converted into a usable type. This is always a problem with the provider. Please report the following to the provider developer:\n\n"+err.Error(),
-			)
-			return
-		}
-		providerMeta6Schema = pm6Schema
-	}
-
-	// get our resource schemas
-	resourceSchemas, diags := s.p.GetResources(ctx)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	resource6Schemas := map[string]*tfprotov6.Schema{}
-	for k, v := range resourceSchemas {
-		schema, diags := v.GetSchema(ctx)
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		schema6, err := schema.tfprotov6Schema(ctx)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error converting resource schema",
-				"The schema for the resource \""+k+"\" couldn't be converted into a usable type. This is always a problem with the provider. Please report the following to the provider developer:\n\n"+err.Error(),
-			)
-			return
-		}
-		resource6Schemas[k] = schema6
-	}
-
-	// get our data source schemas
-	dataSourceSchemas, diags := s.p.GetDataSources(ctx)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	dataSource6Schemas := map[string]*tfprotov6.Schema{}
-	for k, v := range dataSourceSchemas {
-		schema, diags := v.GetSchema(ctx)
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		schema6, err := schema.tfprotov6Schema(ctx)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error converting data sourceschema",
-				"The schema for the data source \""+k+"\" couldn't be converted into a usable type. This is always a problem with the provider. Please report the following to the provider developer:\n\n"+err.Error(),
-			)
-			return
-		}
-		dataSource6Schemas[k] = schema6
-	}
-
-	// ok, we didn't get any error diagnostics, populate the schemas and
-	// send the response
-	resp.Provider = provider6Schema
-	resp.ProviderMeta = providerMeta6Schema
-	resp.ResourceSchemas = resource6Schemas
-	resp.DataSourceSchemas = dataSource6Schemas
+	return toproto6.GetProviderSchemaResponse(ctx, fwResp), nil
 }
 
 // validateProviderConfigResponse is a thin abstraction to allow native Diagnostics usage
@@ -244,12 +108,13 @@ type validateProviderConfigResponse struct {
 func (r validateProviderConfigResponse) toTfprotov6() *tfprotov6.ValidateProviderConfigResponse {
 	return &tfprotov6.ValidateProviderConfigResponse{
 		PreparedConfig: r.PreparedConfig,
-		Diagnostics:    r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics:    toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
-func (s *server) ValidateProviderConfig(ctx context.Context, req *tfprotov6.ValidateProviderConfigRequest) (*tfprotov6.ValidateProviderConfigResponse, error) {
+func (s *Server) ValidateProviderConfig(ctx context.Context, req *tfprotov6.ValidateProviderConfigRequest) (*tfprotov6.ValidateProviderConfigResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &validateProviderConfigResponse{
 		// This RPC allows a modified configuration to be returned. This was
 		// previously used to allow a "required" provider attribute (as defined
@@ -267,8 +132,10 @@ func (s *server) ValidateProviderConfig(ctx context.Context, req *tfprotov6.Vali
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) validateProviderConfig(ctx context.Context, req *tfprotov6.ValidateProviderConfigRequest, resp *validateProviderConfigResponse) {
-	schema, diags := s.p.GetSchema(ctx)
+func (s *Server) validateProviderConfig(ctx context.Context, req *tfprotov6.ValidateProviderConfigRequest, resp *validateProviderConfigResponse) {
+	logging.FrameworkDebug(ctx, "Calling provider defined Provider GetSchema")
+	schema, diags := s.Provider.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined Provider GetSchema")
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
@@ -286,37 +153,55 @@ func (s *server) validateProviderConfig(ctx context.Context, req *tfprotov6.Vali
 		return
 	}
 
-	vpcReq := ValidateProviderConfigRequest{
-		Config: Config{
+	vpcReq := tfsdk.ValidateProviderConfigRequest{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: schema,
 		},
 	}
 
-	if provider, ok := s.p.(ProviderWithConfigValidators); ok {
+	if provider, ok := s.Provider.(tfsdk.ProviderWithConfigValidators); ok {
+		logging.FrameworkTrace(ctx, "Provider implements ProviderWithConfigValidators")
 		for _, configValidator := range provider.ConfigValidators(ctx) {
-			vpcRes := &ValidateProviderConfigResponse{
+			vpcRes := &tfsdk.ValidateProviderConfigResponse{
 				Diagnostics: resp.Diagnostics,
 			}
 
+			logging.FrameworkDebug(
+				ctx,
+				"Calling provider defined ProviderConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 			configValidator.Validate(ctx, vpcReq, vpcRes)
+			logging.FrameworkDebug(
+				ctx,
+				"Called provider defined ProviderConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 
 			resp.Diagnostics = vpcRes.Diagnostics
 		}
 	}
 
-	if provider, ok := s.p.(ProviderWithValidateConfig); ok {
-		vpcRes := &ValidateProviderConfigResponse{
+	if provider, ok := s.Provider.(tfsdk.ProviderWithValidateConfig); ok {
+		logging.FrameworkTrace(ctx, "Provider implements ProviderWithValidateConfig")
+		vpcRes := &tfsdk.ValidateProviderConfigResponse{
 			Diagnostics: resp.Diagnostics,
 		}
 
+		logging.FrameworkDebug(ctx, "Calling provider defined Provider ValidateConfig")
 		provider.ValidateConfig(ctx, vpcReq, vpcRes)
+		logging.FrameworkDebug(ctx, "Called provider defined Provider ValidateConfig")
 
 		resp.Diagnostics = vpcRes.Diagnostics
 	}
 
 	validateSchemaReq := ValidateSchemaRequest{
-		Config: Config{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: schema,
 		},
@@ -325,7 +210,7 @@ func (s *server) validateProviderConfig(ctx context.Context, req *tfprotov6.Vali
 		Diagnostics: resp.Diagnostics,
 	}
 
-	schema.validate(ctx, validateSchemaReq, &validateSchemaResp)
+	SchemaValidate(ctx, schema, validateSchemaReq, &validateSchemaResp)
 
 	resp.Diagnostics = validateSchemaResp.Diagnostics
 }
@@ -337,12 +222,13 @@ type configureProviderResponse struct {
 
 func (r configureProviderResponse) toTfprotov6() *tfprotov6.ConfigureProviderResponse {
 	return &tfprotov6.ConfigureProviderResponse{
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
-func (s *server) ConfigureProvider(ctx context.Context, req *tfprotov6.ConfigureProviderRequest) (*tfprotov6.ConfigureProviderResponse, error) {
+func (s *Server) ConfigureProvider(ctx context.Context, req *tfprotov6.ConfigureProviderRequest) (*tfprotov6.ConfigureProviderResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &configureProviderResponse{}
 
 	s.configureProvider(ctx, req, resp)
@@ -350,8 +236,10 @@ func (s *server) ConfigureProvider(ctx context.Context, req *tfprotov6.Configure
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) configureProvider(ctx context.Context, req *tfprotov6.ConfigureProviderRequest, resp *configureProviderResponse) {
-	schema, diags := s.p.GetSchema(ctx)
+func (s *Server) configureProvider(ctx context.Context, req *tfprotov6.ConfigureProviderRequest, resp *configureProviderResponse) {
+	logging.FrameworkDebug(ctx, "Calling provider defined Provider GetSchema")
+	schema, diags := s.Provider.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined Provider GetSchema")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -364,19 +252,21 @@ func (s *server) configureProvider(ctx context.Context, req *tfprotov6.Configure
 		)
 		return
 	}
-	r := ConfigureProviderRequest{
+	r := tfsdk.ConfigureProviderRequest{
 		TerraformVersion: req.TerraformVersion,
-		Config: Config{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: schema,
 		},
 	}
-	res := &ConfigureProviderResponse{}
-	s.p.Configure(ctx, r, res)
+	res := &tfsdk.ConfigureProviderResponse{}
+	logging.FrameworkDebug(ctx, "Calling provider defined Provider Configure")
+	s.Provider.Configure(ctx, r, res)
+	logging.FrameworkDebug(ctx, "Called provider defined Provider Configure")
 	resp.Diagnostics.Append(res.Diagnostics...)
 }
 
-func (s *server) StopProvider(ctx context.Context, _ *tfprotov6.StopProviderRequest) (*tfprotov6.StopProviderResponse, error) {
+func (s *Server) StopProvider(ctx context.Context, _ *tfprotov6.StopProviderRequest) (*tfprotov6.StopProviderResponse, error) {
 	s.cancelRegisteredContexts(ctx)
 
 	return &tfprotov6.StopProviderResponse{}, nil
@@ -389,12 +279,13 @@ type validateResourceConfigResponse struct {
 
 func (r validateResourceConfigResponse) toTfprotov6() *tfprotov6.ValidateResourceConfigResponse {
 	return &tfprotov6.ValidateResourceConfigResponse{
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
-func (s *server) ValidateResourceConfig(ctx context.Context, req *tfprotov6.ValidateResourceConfigRequest) (*tfprotov6.ValidateResourceConfigResponse, error) {
+func (s *Server) ValidateResourceConfig(ctx context.Context, req *tfprotov6.ValidateResourceConfigRequest) (*tfprotov6.ValidateResourceConfigResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &validateResourceConfigResponse{}
 
 	s.validateResourceConfig(ctx, req, resp)
@@ -402,7 +293,7 @@ func (s *server) ValidateResourceConfig(ctx context.Context, req *tfprotov6.Vali
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) validateResourceConfig(ctx context.Context, req *tfprotov6.ValidateResourceConfigRequest, resp *validateResourceConfigResponse) {
+func (s *Server) validateResourceConfig(ctx context.Context, req *tfprotov6.ValidateResourceConfigRequest, resp *validateResourceConfigResponse) {
 	// Get the type of resource, so we can get its schema and create an
 	// instance
 	resourceType, diags := s.getResourceType(ctx, req.TypeName)
@@ -414,7 +305,9 @@ func (s *server) validateResourceConfig(ctx context.Context, req *tfprotov6.Vali
 
 	// Get the schema from the resource type, so we can embed it in the
 	// config
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType GetSchema")
 	resourceSchema, diags := resourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
@@ -423,7 +316,9 @@ func (s *server) validateResourceConfig(ctx context.Context, req *tfprotov6.Vali
 
 	// Create the resource instance, so we can call its methods and handle
 	// the request
-	resource, diags := resourceType.NewResource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType NewResource")
+	resource, diags := resourceType.NewResource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType NewResource")
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
@@ -441,37 +336,55 @@ func (s *server) validateResourceConfig(ctx context.Context, req *tfprotov6.Vali
 		return
 	}
 
-	vrcReq := ValidateResourceConfigRequest{
-		Config: Config{
+	vrcReq := tfsdk.ValidateResourceConfigRequest{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: resourceSchema,
 		},
 	}
 
-	if resource, ok := resource.(ResourceWithConfigValidators); ok {
+	if resource, ok := resource.(tfsdk.ResourceWithConfigValidators); ok {
+		logging.FrameworkTrace(ctx, "Resource implements ResourceWithConfigValidators")
 		for _, configValidator := range resource.ConfigValidators(ctx) {
-			vrcRes := &ValidateResourceConfigResponse{
+			vrcRes := &tfsdk.ValidateResourceConfigResponse{
 				Diagnostics: resp.Diagnostics,
 			}
 
+			logging.FrameworkDebug(
+				ctx,
+				"Calling provider defined ResourceConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 			configValidator.Validate(ctx, vrcReq, vrcRes)
+			logging.FrameworkDebug(
+				ctx,
+				"Called provider defined ResourceConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 
 			resp.Diagnostics = vrcRes.Diagnostics
 		}
 	}
 
-	if resource, ok := resource.(ResourceWithValidateConfig); ok {
-		vrcRes := &ValidateResourceConfigResponse{
+	if resource, ok := resource.(tfsdk.ResourceWithValidateConfig); ok {
+		logging.FrameworkTrace(ctx, "Resource implements ResourceWithValidateConfig")
+		vrcRes := &tfsdk.ValidateResourceConfigResponse{
 			Diagnostics: resp.Diagnostics,
 		}
 
+		logging.FrameworkDebug(ctx, "Calling provider defined Resource ValidateConfig")
 		resource.ValidateConfig(ctx, vrcReq, vrcRes)
+		logging.FrameworkDebug(ctx, "Called provider defined Resource ValidateConfig")
 
 		resp.Diagnostics = vrcRes.Diagnostics
 	}
 
 	validateSchemaReq := ValidateSchemaRequest{
-		Config: Config{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: resourceSchema,
 		},
@@ -480,7 +393,7 @@ func (s *server) validateResourceConfig(ctx context.Context, req *tfprotov6.Vali
 		Diagnostics: resp.Diagnostics,
 	}
 
-	resourceSchema.validate(ctx, validateSchemaReq, &validateSchemaResp)
+	SchemaValidate(ctx, resourceSchema, validateSchemaReq, &validateSchemaResp)
 
 	resp.Diagnostics = validateSchemaResp.Diagnostics
 }
@@ -494,13 +407,14 @@ type upgradeResourceStateResponse struct {
 
 func (r upgradeResourceStateResponse) toTfprotov6() *tfprotov6.UpgradeResourceStateResponse {
 	return &tfprotov6.UpgradeResourceStateResponse{
-		Diagnostics:   r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics:   toproto6.Diagnostics(r.Diagnostics),
 		UpgradedState: r.UpgradedState,
 	}
 }
 
-func (s *server) UpgradeResourceState(ctx context.Context, req *tfprotov6.UpgradeResourceStateRequest) (*tfprotov6.UpgradeResourceStateResponse, error) {
+func (s *Server) UpgradeResourceState(ctx context.Context, req *tfprotov6.UpgradeResourceStateRequest) (*tfprotov6.UpgradeResourceStateResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &upgradeResourceStateResponse{}
 
 	s.upgradeResourceState(ctx, req, resp)
@@ -508,7 +422,7 @@ func (s *server) UpgradeResourceState(ctx context.Context, req *tfprotov6.Upgrad
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) upgradeResourceState(ctx context.Context, req *tfprotov6.UpgradeResourceStateRequest, resp *upgradeResourceStateResponse) {
+func (s *Server) upgradeResourceState(ctx context.Context, req *tfprotov6.UpgradeResourceStateRequest, resp *upgradeResourceStateResponse) {
 	if req == nil {
 		return
 	}
@@ -528,17 +442,9 @@ func (s *server) upgradeResourceState(ctx context.Context, req *tfprotov6.Upgrad
 		return
 	}
 
-	// This implementation assumes the current schema is the only valid schema
-	// for the given resource and will return an error if any mismatched prior
-	// state is given. This matches prior behavior of the framework, but is now
-	// more explicit in error handling, rather than just passing through any
-	// potentially errant prior state, which should have resulted in a similar
-	// error further in the resource lifecycle.
-	//
-	// TODO: Implement resource state upgrades, rather than just using the
-	//       current resource schema.
-	// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/42
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType GetSchema")
 	resourceSchema, diags := resourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType GetSchema")
 
 	resp.Diagnostics.Append(diags...)
 
@@ -546,32 +452,173 @@ func (s *server) upgradeResourceState(ctx context.Context, req *tfprotov6.Upgrad
 		return
 	}
 
-	resourceSchemaType := resourceSchema.TerraformType(ctx)
+	// Terraform CLI can call UpgradeResourceState even if the stored state
+	// version matches the current schema. Presumably this is to account for
+	// the previous terraform-plugin-sdk implementation, which handled some
+	// state fixups on behalf of Terraform CLI. When this happens, we do not
+	// want to return errors for a missing ResourceWithUpgradeState
+	// implementation or an undefined version within an existing
+	// ResourceWithUpgradeState implementation as that would be confusing
+	// detail for provider developers. Instead, the framework will attempt to
+	// roundtrip the prior RawState to a State matching the current Schema.
+	//
+	// TODO: To prevent provider developers from accidentially implementing
+	// ResourceWithUpgradeState with a version matching the current schema
+	// version which would never get called, the framework can introduce a
+	// unit test helper.
+	// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/113
+	if req.Version == resourceSchema.Version {
+		logging.FrameworkTrace(ctx, "UpgradeResourceState request version matches current Schema version, using framework defined passthrough implementation")
 
-	rawStateValue, err := req.RawState.Unmarshal(resourceSchemaType)
+		resourceSchemaType := resourceSchema.TerraformType(ctx)
 
-	if err != nil {
+		rawStateValue, err := req.RawState.Unmarshal(resourceSchemaType)
+
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Read Previously Saved State for UpgradeResourceState",
+				"There was an error reading the saved resource state using the current resource schema.\n\n"+
+					"If this resource state was last refreshed with Terraform CLI 0.11 and earlier, it must be refreshed or applied with an older provider version first. "+
+					"If you manually modified the resource state, you will need to manually modify it to match the current resource schema. "+
+					"Otherwise, please report this to the provider developer:\n\n"+err.Error(),
+			)
+			return
+		}
+
+		// NewDynamicValue will ensure the Msgpack field is set for Terraform CLI
+		// 0.12 through 0.14 compatibility when using terraform-plugin-mux tf6to5server.
+		// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/262
+		upgradedStateValue, err := tfprotov6.NewDynamicValue(resourceSchemaType, rawStateValue)
+
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Convert Previously Saved State for UpgradeResourceState",
+				"There was an error converting the saved resource state using the current resource schema. "+
+					"This is always an issue in the Terraform Provider SDK used to implement the resource and should be reported to the provider developers.\n\n"+
+					"Please report this to the provider developer:\n\n"+err.Error(),
+			)
+			return
+		}
+
+		resp.UpgradedState = &upgradedStateValue
+
+		return
+	}
+
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType NewResource")
+	resource, diags := resourceType.NewResource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType NewResource")
+
+	resp.Diagnostics.Append(diags...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resourceWithUpgradeState, ok := resource.(tfsdk.ResourceWithUpgradeState)
+
+	if !ok {
 		resp.Diagnostics.AddError(
-			"Unable to Read Previously Saved State for UpgradeResourceState",
-			"There was an error reading the saved resource state using the current resource schema. "+
-				"This resource was implemented in a Terraform Provider SDK that does not support upgrading resource state yet.\n\n"+
-				"If the resource previously implemented different resource state versions, the provider developers will need to revert back to the previous implementation. "+
-				"If this resource state was last refreshed with Terraform CLI 0.11 and earlier, it must be refreshed or applied with an older provider version first. "+
-				"If you manually modified the resource state, you will need to manually modify it to match the current resource schema. "+
-				"Otherwise, please report this to the provider developer:\n\n"+err.Error(),
+			"Unable to Upgrade Resource State",
+			"This resource was implemented without an UpgradeState() method, "+
+				fmt.Sprintf("however Terraform was expecting an implementation for version %d upgrade.\n\n", req.Version)+
+				"This is always an issue with the Terraform Provider and should be reported to the provider developer.",
 		)
 		return
 	}
 
-	// NewDynamicValue will ensure the Msgpack field is set for Terraform CLI
-	// 0.12 through 0.14 compatibility when using terraform-plugin-mux tf6to5server.
-	// Reference: https://github.com/hashicorp/terraform-plugin-framework/issues/262
-	upgradedStateValue, err := tfprotov6.NewDynamicValue(resourceSchemaType, rawStateValue)
+	logging.FrameworkTrace(ctx, "Resource implements ResourceWithUpgradeState")
+
+	logging.FrameworkDebug(ctx, "Calling provider defined Resource UpgradeState")
+	resourceStateUpgraders := resourceWithUpgradeState.UpgradeState(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined Resource UpgradeState")
+
+	// Panic prevention
+	if resourceStateUpgraders == nil {
+		resourceStateUpgraders = make(map[int64]tfsdk.ResourceStateUpgrader, 0)
+	}
+
+	resourceStateUpgrader, ok := resourceStateUpgraders[req.Version]
+
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unable to Upgrade Resource State",
+			"This resource was implemented with an UpgradeState() method, "+
+				fmt.Sprintf("however Terraform was expecting an implementation for version %d upgrade.\n\n", req.Version)+
+				"This is always an issue with the Terraform Provider and should be reported to the provider developer.",
+		)
+		return
+	}
+
+	upgradeResourceStateRequest := tfsdk.UpgradeResourceStateRequest{
+		RawState: req.RawState,
+	}
+
+	if resourceStateUpgrader.PriorSchema != nil {
+		logging.FrameworkTrace(ctx, "Initializing populated UpgradeResourceStateRequest state from provider defined prior schema and request RawState")
+
+		priorSchemaType := resourceStateUpgrader.PriorSchema.TerraformType(ctx)
+
+		rawStateValue, err := req.RawState.Unmarshal(priorSchemaType)
+
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Read Previously Saved State for UpgradeResourceState",
+				fmt.Sprintf("There was an error reading the saved resource state using the prior resource schema defined for version %d upgrade.\n\n", req.Version)+
+					"Please report this to the provider developer:\n\n"+err.Error(),
+			)
+			return
+		}
+
+		upgradeResourceStateRequest.State = &tfsdk.State{
+			Raw:    rawStateValue,
+			Schema: *resourceStateUpgrader.PriorSchema,
+		}
+	}
+
+	upgradeResourceStateResponse := tfsdk.UpgradeResourceStateResponse{
+		State: tfsdk.State{
+			Schema: resourceSchema,
+		},
+	}
+
+	// To simplify provider logic, this could perform a best effort attempt
+	// to populate the response State by looping through all Attribute/Block
+	// by calling the equivalent of SetAttribute(GetAttribute()) and skipping
+	// any errors.
+
+	logging.FrameworkDebug(ctx, "Calling provider defined StateUpgrader")
+	resourceStateUpgrader.StateUpgrader(ctx, upgradeResourceStateRequest, &upgradeResourceStateResponse)
+	logging.FrameworkDebug(ctx, "Called provider defined StateUpgrader")
+
+	resp.Diagnostics.Append(upgradeResourceStateResponse.Diagnostics...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if upgradeResourceStateResponse.DynamicValue != nil {
+		logging.FrameworkTrace(ctx, "UpgradeResourceStateResponse DynamicValue set, overriding State")
+		resp.UpgradedState = upgradeResourceStateResponse.DynamicValue
+		return
+	}
+
+	if upgradeResourceStateResponse.State.Raw.Type() == nil || upgradeResourceStateResponse.State.Raw.IsNull() {
+		resp.Diagnostics.AddError(
+			"Missing Upgraded Resource State",
+			fmt.Sprintf("After attempting a resource state upgrade to version %d, the provider did not return any state data. ", req.Version)+
+				"Preventing the unexpected loss of resource state data. "+
+				"This is always an issue with the Terraform Provider and should be reported to the provider developer.",
+		)
+		return
+	}
+
+	upgradedStateValue, err := tfprotov6.NewDynamicValue(upgradeResourceStateResponse.State.Schema.TerraformType(ctx), upgradeResourceStateResponse.State.Raw)
 
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Unable to Convert Previously Saved State for UpgradeResourceState",
-			"There was an error converting the saved resource state using the current resource schema. "+
+			"Unable to Convert Upgraded Resource State",
+			fmt.Sprintf("An unexpected error was encountered when converting the state returned for version %d upgrade to a usable type. ", req.Version)+
 				"This is always an issue in the Terraform Provider SDK used to implement the resource and should be reported to the provider developers.\n\n"+
 				"Please report this to the provider developer:\n\n"+err.Error(),
 		)
@@ -591,13 +638,14 @@ type readResourceResponse struct {
 func (r readResourceResponse) toTfprotov6() *tfprotov6.ReadResourceResponse {
 	return &tfprotov6.ReadResourceResponse{
 		NewState:    r.NewState,
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 		Private:     r.Private,
 	}
 }
 
-func (s *server) ReadResource(ctx context.Context, req *tfprotov6.ReadResourceRequest) (*tfprotov6.ReadResourceResponse, error) {
+func (s *Server) ReadResource(ctx context.Context, req *tfprotov6.ReadResourceRequest) (*tfprotov6.ReadResourceResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &readResourceResponse{}
 
 	s.readResource(ctx, req, resp)
@@ -605,18 +653,22 @@ func (s *server) ReadResource(ctx context.Context, req *tfprotov6.ReadResourceRe
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) readResource(ctx context.Context, req *tfprotov6.ReadResourceRequest, resp *readResourceResponse) {
+func (s *Server) readResource(ctx context.Context, req *tfprotov6.ReadResourceRequest, resp *readResourceResponse) {
 	resourceType, diags := s.getResourceType(ctx, req.TypeName)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType GetSchema")
 	resourceSchema, diags := resourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resource, diags := resourceType.NewResource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType NewResource")
+	resource, diags := resourceType.NewResource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType NewResource")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -629,19 +681,22 @@ func (s *server) readResource(ctx context.Context, req *tfprotov6.ReadResourceRe
 		)
 		return
 	}
-	readReq := ReadResourceRequest{
-		State: State{
+	readReq := tfsdk.ReadResourceRequest{
+		State: tfsdk.State{
 			Raw:    state,
 			Schema: resourceSchema,
 		},
 	}
-	if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+	if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+		logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+		logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 		pmSchema, diags := pm.GetMetaSchema(ctx)
+		logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		readReq.ProviderMeta = Config{
+		readReq.ProviderMeta = tfsdk.Config{
 			Schema: pmSchema,
 			Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 		}
@@ -658,14 +713,16 @@ func (s *server) readResource(ctx context.Context, req *tfprotov6.ReadResourceRe
 			readReq.ProviderMeta.Raw = pmValue
 		}
 	}
-	readResp := ReadResourceResponse{
-		State: State{
+	readResp := tfsdk.ReadResourceResponse{
+		State: tfsdk.State{
 			Raw:    state,
 			Schema: resourceSchema,
 		},
 		Diagnostics: resp.Diagnostics,
 	}
+	logging.FrameworkDebug(ctx, "Calling provider defined Resource Read")
 	resource.Read(ctx, readReq, &readResp)
+	logging.FrameworkDebug(ctx, "Called provider defined Resource Read")
 	resp.Diagnostics = readResp.Diagnostics
 	// don't return even if we have error diagnostics, we need to set the
 	// state on the response, first
@@ -681,35 +738,37 @@ func (s *server) readResource(ctx context.Context, req *tfprotov6.ReadResourceRe
 	resp.NewState = &newState
 }
 
-func markComputedNilsAsUnknown(ctx context.Context, config tftypes.Value, resourceSchema Schema) func(*tftypes.AttributePath, tftypes.Value) (tftypes.Value, error) {
+func markComputedNilsAsUnknown(ctx context.Context, config tftypes.Value, resourceSchema tfsdk.Schema) func(*tftypes.AttributePath, tftypes.Value) (tftypes.Value, error) {
 	return func(path *tftypes.AttributePath, val tftypes.Value) (tftypes.Value, error) {
+		ctx = logging.FrameworkWithAttributePath(ctx, path.String())
+
 		// we are only modifying attributes, not the entire resource
 		if len(path.Steps()) < 1 {
 			return val, nil
 		}
 		configVal, _, err := tftypes.WalkAttributePath(config, path)
 		if err != tftypes.ErrInvalidStep && err != nil {
-			tfsdklog.Error(ctx, "error walking attribute path", map[string]interface{}{"path": path})
+			logging.FrameworkError(ctx, "error walking attribute path")
 			return val, err
 		} else if err != tftypes.ErrInvalidStep && !configVal.(tftypes.Value).IsNull() {
-			tfsdklog.Trace(ctx, "attribute not null in config, not marking unknown", map[string]interface{}{"path": path})
+			logging.FrameworkTrace(ctx, "attribute not null in config, not marking unknown")
 			return val, nil
 		}
 		attribute, err := resourceSchema.AttributeAtPath(path)
 		if err != nil {
-			if errors.Is(err, ErrPathInsideAtomicAttribute) {
+			if errors.Is(err, tfsdk.ErrPathInsideAtomicAttribute) {
 				// ignore attributes/elements inside schema.Attributes, they have no schema of their own
-				tfsdklog.Trace(ctx, "attribute is a non-schema attribute, not marking unknown", map[string]interface{}{"path": path})
+				logging.FrameworkTrace(ctx, "attribute is a non-schema attribute, not marking unknown")
 				return val, nil
 			}
-			tfsdklog.Error(ctx, "couldn't find attribute in resource schema", map[string]interface{}{"path": path})
+			logging.FrameworkError(ctx, "couldn't find attribute in resource schema")
 			return tftypes.Value{}, fmt.Errorf("couldn't find attribute in resource schema: %w", err)
 		}
 		if !attribute.Computed {
-			tfsdklog.Trace(ctx, "attribute is not computed in schema, not marking unknown", map[string]interface{}{"path": path})
+			logging.FrameworkTrace(ctx, "attribute is not computed in schema, not marking unknown")
 			return val, nil
 		}
-		tfsdklog.Debug(ctx, "marking computed attribute that is null in the config as unknown", map[string]interface{}{"path": path})
+		logging.FrameworkDebug(ctx, "marking computed attribute that is null in the config as unknown")
 		return tftypes.NewValue(val.Type(), tftypes.UnknownValue), nil
 	}
 }
@@ -725,14 +784,15 @@ type planResourceChangeResponse struct {
 func (r planResourceChangeResponse) toTfprotov6() *tfprotov6.PlanResourceChangeResponse {
 	return &tfprotov6.PlanResourceChangeResponse{
 		PlannedState:    r.PlannedState,
-		Diagnostics:     r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics:     toproto6.Diagnostics(r.Diagnostics),
 		RequiresReplace: r.RequiresReplace,
 		PlannedPrivate:  r.PlannedPrivate,
 	}
 }
 
-func (s *server) PlanResourceChange(ctx context.Context, req *tfprotov6.PlanResourceChangeRequest) (*tfprotov6.PlanResourceChangeResponse, error) {
+func (s *Server) PlanResourceChange(ctx context.Context, req *tfprotov6.PlanResourceChangeRequest) (*tfprotov6.PlanResourceChangeResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &planResourceChangeResponse{}
 
 	s.planResourceChange(ctx, req, resp)
@@ -740,7 +800,7 @@ func (s *server) PlanResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanResourceChangeRequest, resp *planResourceChangeResponse) {
+func (s *Server) planResourceChange(ctx context.Context, req *tfprotov6.PlanResourceChangeRequest, resp *planResourceChangeResponse) {
 	// get the type of resource, so we can get its schema and create an
 	// instance
 	resourceType, diags := s.getResourceType(ctx, req.TypeName)
@@ -751,7 +811,9 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 
 	// get the schema from the resource type, so we can embed it in the
 	// config and plan
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType GetSchema")
 	resourceSchema, diags := resourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -788,7 +850,9 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 
 	// create the resource instance, so we can call its methods and handle
 	// the request
-	resource, diags := resourceType.NewResource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType NewResource")
+	resource, diags := resourceType.NewResource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType NewResource")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -845,7 +909,7 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 	// We only do this if there's a plan to modify; otherwise, it
 	// represents a resource being deleted and there's no point.
 	if !plan.IsNull() && !plan.Equal(state) {
-		tfsdklog.Trace(ctx, "marking computed null values as unknown")
+		logging.FrameworkTrace(ctx, "marking computed null values as unknown")
 		modifiedPlan, err := tftypes.Transform(plan, markComputedNilsAsUnknown(ctx, config, resourceSchema))
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -855,7 +919,7 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 			return
 		}
 		if !plan.Equal(modifiedPlan) {
-			tfsdklog.Trace(ctx, "at least one value was changed to unknown")
+			logging.FrameworkTrace(ctx, "at least one value was changed to unknown")
 		}
 		plan = modifiedPlan
 	}
@@ -867,28 +931,31 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 	// represents a resource being deleted and there's no point.
 	if !plan.IsNull() {
 		modifySchemaPlanReq := ModifySchemaPlanRequest{
-			Config: Config{
+			Config: tfsdk.Config{
 				Schema: resourceSchema,
 				Raw:    config,
 			},
-			State: State{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    state,
 			},
-			Plan: Plan{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
 		}
-		if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+		if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+			logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+			logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 			pmSchema, diags := pm.GetMetaSchema(ctx)
+			logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 			if diags != nil {
 				resp.Diagnostics.Append(diags...)
 				if resp.Diagnostics.HasError() {
 					return
 				}
 			}
-			modifySchemaPlanReq.ProviderMeta = Config{
+			modifySchemaPlanReq.ProviderMeta = tfsdk.Config{
 				Schema: pmSchema,
 				Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 			}
@@ -907,14 +974,14 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 		}
 
 		modifySchemaPlanResp := ModifySchemaPlanResponse{
-			Plan: Plan{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
 			Diagnostics: resp.Diagnostics,
 		}
 
-		resourceSchema.modifyPlan(ctx, modifySchemaPlanReq, &modifySchemaPlanResp)
+		SchemaModifyPlan(ctx, resourceSchema, modifySchemaPlanReq, &modifySchemaPlanResp)
 		resp.RequiresReplace = append(resp.RequiresReplace, modifySchemaPlanResp.RequiresReplace...)
 		plan = modifySchemaPlanResp.Plan.Raw
 		resp.Diagnostics = modifySchemaPlanResp.Diagnostics
@@ -931,29 +998,33 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 	// delete resources, e.g. to inform practitioners that the resource
 	// _can't_ be deleted in the API and will just be removed from
 	// Terraform's state
-	var modifyPlanResp ModifyResourcePlanResponse
-	if resource, ok := resource.(ResourceWithModifyPlan); ok {
-		modifyPlanReq := ModifyResourcePlanRequest{
-			Config: Config{
+	var modifyPlanResp tfsdk.ModifyResourcePlanResponse
+	if resource, ok := resource.(tfsdk.ResourceWithModifyPlan); ok {
+		logging.FrameworkTrace(ctx, "Resource implements ResourceWithModifyPlan")
+		modifyPlanReq := tfsdk.ModifyResourcePlanRequest{
+			Config: tfsdk.Config{
 				Schema: resourceSchema,
 				Raw:    config,
 			},
-			State: State{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    state,
 			},
-			Plan: Plan{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
 		}
-		if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+		if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+			logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+			logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 			pmSchema, diags := pm.GetMetaSchema(ctx)
+			logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 			resp.Diagnostics.Append(diags...)
 			if resp.Diagnostics.HasError() {
 				return
 			}
-			modifyPlanReq.ProviderMeta = Config{
+			modifyPlanReq.ProviderMeta = tfsdk.Config{
 				Schema: pmSchema,
 				Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 			}
@@ -971,15 +1042,17 @@ func (s *server) planResourceChange(ctx context.Context, req *tfprotov6.PlanReso
 			}
 		}
 
-		modifyPlanResp = ModifyResourcePlanResponse{
-			Plan: Plan{
+		modifyPlanResp = tfsdk.ModifyResourcePlanResponse{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
 			RequiresReplace: []*tftypes.AttributePath{},
 			Diagnostics:     resp.Diagnostics,
 		}
+		logging.FrameworkDebug(ctx, "Calling provider defined Resource ModifyPlan")
 		resource.ModifyPlan(ctx, modifyPlanReq, &modifyPlanResp)
+		logging.FrameworkDebug(ctx, "Called provider defined Resource ModifyPlan")
 		resp.Diagnostics = modifyPlanResp.Diagnostics
 		plan = modifyPlanResp.Plan.Raw
 	}
@@ -1010,7 +1083,7 @@ func (r applyResourceChangeResponse) toTfprotov6() *tfprotov6.ApplyResourceChang
 	return &tfprotov6.ApplyResourceChangeResponse{
 		NewState:    r.NewState,
 		Private:     r.Private,
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
@@ -1033,7 +1106,7 @@ func normaliseRequiresReplace(ctx context.Context, rs []*tftypes.AttributePath) 
 	j := 1
 	for i := 1; i < len(rs); i++ {
 		if rs[i].Equal(ret[j-1]) {
-			tfsdklog.Debug(ctx, "attribute found multiple times in RequiresReplace, removing duplicate", map[string]interface{}{"path": rs[i]})
+			logging.FrameworkDebug(ctx, "attribute found multiple times in RequiresReplace, removing duplicate", map[string]interface{}{logging.KeyAttributePath: rs[i]})
 			continue
 		}
 		ret[j] = rs[i]
@@ -1042,8 +1115,9 @@ func normaliseRequiresReplace(ctx context.Context, rs []*tftypes.AttributePath) 
 	return ret[:j]
 }
 
-func (s *server) ApplyResourceChange(ctx context.Context, req *tfprotov6.ApplyResourceChangeRequest) (*tfprotov6.ApplyResourceChangeResponse, error) {
+func (s *Server) ApplyResourceChange(ctx context.Context, req *tfprotov6.ApplyResourceChangeRequest) (*tfprotov6.ApplyResourceChangeResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &applyResourceChangeResponse{
 		// default to the prior state, so the state won't change unless
 		// we choose to change it
@@ -1055,7 +1129,7 @@ func (s *server) ApplyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyResourceChangeRequest, resp *applyResourceChangeResponse) {
+func (s *Server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyResourceChangeRequest, resp *applyResourceChangeResponse) {
 	// get the type of resource, so we can get its schema and create an
 	// instance
 	resourceType, diags := s.getResourceType(ctx, req.TypeName)
@@ -1066,7 +1140,9 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 
 	// get the schema from the resource type, so we can embed it in the
 	// config and plan
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType GetSchema")
 	resourceSchema, diags := resourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -1074,7 +1150,9 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 
 	// create the resource instance, so we can call its methods and handle
 	// the request
-	resource, diags := resourceType.NewResource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined ResourceType NewResource")
+	resource, diags := resourceType.NewResource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined ResourceType NewResource")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -1135,24 +1213,27 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 
 	switch {
 	case create && !update && !destroy:
-		tfsdklog.Trace(ctx, "running create")
-		createReq := CreateResourceRequest{
-			Config: Config{
+		logging.FrameworkTrace(ctx, "running create")
+		createReq := tfsdk.CreateResourceRequest{
+			Config: tfsdk.Config{
 				Schema: resourceSchema,
 				Raw:    config,
 			},
-			Plan: Plan{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
 		}
-		if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+		if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+			logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+			logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 			pmSchema, diags := pm.GetMetaSchema(ctx)
+			logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 			resp.Diagnostics.Append(diags...)
 			if resp.Diagnostics.HasError() {
 				return
 			}
-			createReq.ProviderMeta = Config{
+			createReq.ProviderMeta = tfsdk.Config{
 				Schema: pmSchema,
 				Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 			}
@@ -1169,14 +1250,16 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 				createReq.ProviderMeta.Raw = pmValue
 			}
 		}
-		createResp := CreateResourceResponse{
-			State: State{
+		createResp := tfsdk.CreateResourceResponse{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    priorState,
 			},
 			Diagnostics: resp.Diagnostics,
 		}
+		logging.FrameworkDebug(ctx, "Calling provider defined Resource Create")
 		resource.Create(ctx, createReq, &createResp)
+		logging.FrameworkDebug(ctx, "Called provider defined Resource Create")
 		resp.Diagnostics = createResp.Diagnostics
 		newState, err := tfprotov6.NewDynamicValue(resourceSchema.TerraformType(ctx), createResp.State.Raw)
 		if err != nil {
@@ -1188,28 +1271,31 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 		}
 		resp.NewState = &newState
 	case !create && update && !destroy:
-		tfsdklog.Trace(ctx, "running update")
-		updateReq := UpdateResourceRequest{
-			Config: Config{
+		logging.FrameworkTrace(ctx, "running update")
+		updateReq := tfsdk.UpdateResourceRequest{
+			Config: tfsdk.Config{
 				Schema: resourceSchema,
 				Raw:    config,
 			},
-			Plan: Plan{
+			Plan: tfsdk.Plan{
 				Schema: resourceSchema,
 				Raw:    plan,
 			},
-			State: State{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    priorState,
 			},
 		}
-		if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+		if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+			logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+			logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 			pmSchema, diags := pm.GetMetaSchema(ctx)
+			logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 			resp.Diagnostics.Append(diags...)
 			if resp.Diagnostics.HasError() {
 				return
 			}
-			updateReq.ProviderMeta = Config{
+			updateReq.ProviderMeta = tfsdk.Config{
 				Schema: pmSchema,
 				Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 			}
@@ -1226,14 +1312,16 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 				updateReq.ProviderMeta.Raw = pmValue
 			}
 		}
-		updateResp := UpdateResourceResponse{
-			State: State{
+		updateResp := tfsdk.UpdateResourceResponse{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    priorState,
 			},
 			Diagnostics: resp.Diagnostics,
 		}
+		logging.FrameworkDebug(ctx, "Calling provider defined Resource Update")
 		resource.Update(ctx, updateReq, &updateResp)
+		logging.FrameworkDebug(ctx, "Called provider defined Resource Update")
 		resp.Diagnostics = updateResp.Diagnostics
 		newState, err := tfprotov6.NewDynamicValue(resourceSchema.TerraformType(ctx), updateResp.State.Raw)
 		if err != nil {
@@ -1245,20 +1333,23 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 		}
 		resp.NewState = &newState
 	case !create && !update && destroy:
-		tfsdklog.Trace(ctx, "running delete")
-		destroyReq := DeleteResourceRequest{
-			State: State{
+		logging.FrameworkTrace(ctx, "running delete")
+		destroyReq := tfsdk.DeleteResourceRequest{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    priorState,
 			},
 		}
-		if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+		if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+			logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+			logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 			pmSchema, diags := pm.GetMetaSchema(ctx)
+			logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 			resp.Diagnostics.Append(diags...)
 			if resp.Diagnostics.HasError() {
 				return
 			}
-			destroyReq.ProviderMeta = Config{
+			destroyReq.ProviderMeta = tfsdk.Config{
 				Schema: pmSchema,
 				Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 			}
@@ -1275,15 +1366,23 @@ func (s *server) applyResourceChange(ctx context.Context, req *tfprotov6.ApplyRe
 				destroyReq.ProviderMeta.Raw = pmValue
 			}
 		}
-		destroyResp := DeleteResourceResponse{
-			State: State{
+		destroyResp := tfsdk.DeleteResourceResponse{
+			State: tfsdk.State{
 				Schema: resourceSchema,
 				Raw:    priorState,
 			},
 			Diagnostics: resp.Diagnostics,
 		}
+		logging.FrameworkDebug(ctx, "Calling provider defined Resource Delete")
 		resource.Delete(ctx, destroyReq, &destroyResp)
+		logging.FrameworkDebug(ctx, "Called provider defined Resource Delete")
 		resp.Diagnostics = destroyResp.Diagnostics
+
+		if !resp.Diagnostics.HasError() {
+			logging.FrameworkTrace(ctx, "No provider defined Delete errors detected, ensuring State is cleared")
+			destroyResp.State.RemoveResource(ctx)
+		}
+
 		newState, err := tfprotov6.NewDynamicValue(resourceSchema.TerraformType(ctx), destroyResp.State.Raw)
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -1308,12 +1407,13 @@ type validateDataResourceConfigResponse struct {
 
 func (r validateDataResourceConfigResponse) toTfprotov6() *tfprotov6.ValidateDataResourceConfigResponse {
 	return &tfprotov6.ValidateDataResourceConfigResponse{
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
-func (s *server) ValidateDataResourceConfig(ctx context.Context, req *tfprotov6.ValidateDataResourceConfigRequest) (*tfprotov6.ValidateDataResourceConfigResponse, error) {
+func (s *Server) ValidateDataResourceConfig(ctx context.Context, req *tfprotov6.ValidateDataResourceConfigRequest) (*tfprotov6.ValidateDataResourceConfigResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &validateDataResourceConfigResponse{}
 
 	s.validateDataResourceConfig(ctx, req, resp)
@@ -1321,7 +1421,7 @@ func (s *server) ValidateDataResourceConfig(ctx context.Context, req *tfprotov6.
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.ValidateDataResourceConfigRequest, resp *validateDataResourceConfigResponse) {
+func (s *Server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.ValidateDataResourceConfigRequest, resp *validateDataResourceConfigResponse) {
 
 	// Get the type of data source, so we can get its schema and create an
 	// instance
@@ -1334,7 +1434,9 @@ func (s *server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.
 
 	// Get the schema from the data source type, so we can embed it in the
 	// config
+	logging.FrameworkDebug(ctx, "Calling provider defined DataSourceType GetSchema")
 	dataSourceSchema, diags := dataSourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined DataSourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
@@ -1343,7 +1445,9 @@ func (s *server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.
 
 	// Create the data source instance, so we can call its methods and handle
 	// the request
-	dataSource, diags := dataSourceType.NewDataSource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined DataSourceType NewDataSource")
+	dataSource, diags := dataSourceType.NewDataSource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined DataSourceType NewDataSource")
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
@@ -1361,37 +1465,55 @@ func (s *server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.
 		return
 	}
 
-	vrcReq := ValidateDataSourceConfigRequest{
-		Config: Config{
+	vrcReq := tfsdk.ValidateDataSourceConfigRequest{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: dataSourceSchema,
 		},
 	}
 
-	if dataSource, ok := dataSource.(DataSourceWithConfigValidators); ok {
+	if dataSource, ok := dataSource.(tfsdk.DataSourceWithConfigValidators); ok {
+		logging.FrameworkTrace(ctx, "DataSource implements DataSourceWithConfigValidators")
 		for _, configValidator := range dataSource.ConfigValidators(ctx) {
-			vrcRes := &ValidateDataSourceConfigResponse{
+			vrcRes := &tfsdk.ValidateDataSourceConfigResponse{
 				Diagnostics: resp.Diagnostics,
 			}
 
+			logging.FrameworkDebug(
+				ctx,
+				"Calling provider defined DataSourceConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 			configValidator.Validate(ctx, vrcReq, vrcRes)
+			logging.FrameworkDebug(
+				ctx,
+				"Called provider defined DataSourceConfigValidator",
+				map[string]interface{}{
+					logging.KeyDescription: configValidator.Description(ctx),
+				},
+			)
 
 			resp.Diagnostics = vrcRes.Diagnostics
 		}
 	}
 
-	if dataSource, ok := dataSource.(DataSourceWithValidateConfig); ok {
-		vrcRes := &ValidateDataSourceConfigResponse{
+	if dataSource, ok := dataSource.(tfsdk.DataSourceWithValidateConfig); ok {
+		logging.FrameworkTrace(ctx, "DataSource implements DataSourceWithValidateConfig")
+		vrcRes := &tfsdk.ValidateDataSourceConfigResponse{
 			Diagnostics: resp.Diagnostics,
 		}
 
+		logging.FrameworkDebug(ctx, "Calling provider defined DataSource ValidateConfig")
 		dataSource.ValidateConfig(ctx, vrcReq, vrcRes)
+		logging.FrameworkDebug(ctx, "Called provider defined DataSource ValidateConfig")
 
 		resp.Diagnostics = vrcRes.Diagnostics
 	}
 
 	validateSchemaReq := ValidateSchemaRequest{
-		Config: Config{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: dataSourceSchema,
 		},
@@ -1400,7 +1522,7 @@ func (s *server) validateDataResourceConfig(ctx context.Context, req *tfprotov6.
 		Diagnostics: resp.Diagnostics,
 	}
 
-	dataSourceSchema.validate(ctx, validateSchemaReq, &validateSchemaResp)
+	SchemaValidate(ctx, dataSourceSchema, validateSchemaReq, &validateSchemaResp)
 
 	resp.Diagnostics = validateSchemaResp.Diagnostics
 }
@@ -1414,12 +1536,13 @@ type readDataSourceResponse struct {
 func (r readDataSourceResponse) toTfprotov6() *tfprotov6.ReadDataSourceResponse {
 	return &tfprotov6.ReadDataSourceResponse{
 		State:       r.State,
-		Diagnostics: r.Diagnostics.ToTfprotov6Diagnostics(),
+		Diagnostics: toproto6.Diagnostics(r.Diagnostics),
 	}
 }
 
-func (s *server) ReadDataSource(ctx context.Context, req *tfprotov6.ReadDataSourceRequest) (*tfprotov6.ReadDataSourceResponse, error) {
+func (s *Server) ReadDataSource(ctx context.Context, req *tfprotov6.ReadDataSourceRequest) (*tfprotov6.ReadDataSourceResponse, error) {
 	ctx = s.registerContext(ctx)
+	ctx = logging.InitContext(ctx)
 	resp := &readDataSourceResponse{}
 
 	s.readDataSource(ctx, req, resp)
@@ -1427,18 +1550,22 @@ func (s *server) ReadDataSource(ctx context.Context, req *tfprotov6.ReadDataSour
 	return resp.toTfprotov6(), nil
 }
 
-func (s *server) readDataSource(ctx context.Context, req *tfprotov6.ReadDataSourceRequest, resp *readDataSourceResponse) {
+func (s *Server) readDataSource(ctx context.Context, req *tfprotov6.ReadDataSourceRequest, resp *readDataSourceResponse) {
 	dataSourceType, diags := s.getDataSourceType(ctx, req.TypeName)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	logging.FrameworkDebug(ctx, "Calling provider defined DataSourceType GetSchema")
 	dataSourceSchema, diags := dataSourceType.GetSchema(ctx)
+	logging.FrameworkDebug(ctx, "Called provider defined DataSourceType GetSchema")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	dataSource, diags := dataSourceType.NewDataSource(ctx, s.p)
+	logging.FrameworkDebug(ctx, "Calling provider defined DataSourceType NewDataSource")
+	dataSource, diags := dataSourceType.NewDataSource(ctx, s.Provider)
+	logging.FrameworkDebug(ctx, "Called provider defined DataSourceType NewDataSource")
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -1451,19 +1578,22 @@ func (s *server) readDataSource(ctx context.Context, req *tfprotov6.ReadDataSour
 		)
 		return
 	}
-	readReq := ReadDataSourceRequest{
-		Config: Config{
+	readReq := tfsdk.ReadDataSourceRequest{
+		Config: tfsdk.Config{
 			Raw:    config,
 			Schema: dataSourceSchema,
 		},
 	}
-	if pm, ok := s.p.(ProviderWithProviderMeta); ok {
+	if pm, ok := s.Provider.(tfsdk.ProviderWithProviderMeta); ok {
+		logging.FrameworkTrace(ctx, "Provider implements ProviderWithProviderMeta")
+		logging.FrameworkDebug(ctx, "Calling provider defined Provider GetMetaSchema")
 		pmSchema, diags := pm.GetMetaSchema(ctx)
+		logging.FrameworkDebug(ctx, "Called provider defined Provider GetMetaSchema")
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		readReq.ProviderMeta = Config{
+		readReq.ProviderMeta = tfsdk.Config{
 			Schema: pmSchema,
 			Raw:    tftypes.NewValue(pmSchema.TerraformType(ctx), nil),
 		}
@@ -1480,8 +1610,8 @@ func (s *server) readDataSource(ctx context.Context, req *tfprotov6.ReadDataSour
 			readReq.ProviderMeta.Raw = pmValue
 		}
 	}
-	readResp := ReadDataSourceResponse{
-		State: State{
+	readResp := tfsdk.ReadDataSourceResponse{
+		State: tfsdk.State{
 			Schema: dataSourceSchema,
 			// default to the config values
 			// they should be of the same type
@@ -1490,7 +1620,9 @@ func (s *server) readDataSource(ctx context.Context, req *tfprotov6.ReadDataSour
 		},
 		Diagnostics: resp.Diagnostics,
 	}
+	logging.FrameworkDebug(ctx, "Calling provider defined DataSource Read")
 	dataSource.Read(ctx, readReq, &readResp)
+	logging.FrameworkDebug(ctx, "Called provider defined DataSource Read")
 	resp.Diagnostics = readResp.Diagnostics
 	// don't return even if we have error diagnostics, we need to set the
 	// state on the response, first

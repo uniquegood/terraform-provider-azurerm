@@ -1,11 +1,14 @@
+//go:build framework
+
 package acceptance
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/acceptance/helpers"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/acceptance/testclient"
@@ -105,28 +108,22 @@ func RunTestsInSequence(t *testing.T, tests map[string]map[string]func(t *testin
 
 func (td TestData) runAcceptanceTest(t *testing.T, testCase resource.TestCase) {
 	testCase.ExternalProviders = td.externalProviders()
-	testCase.ProviderFactories = td.providers()
+	testCase.ProtoV6ProviderFactories = td.providers()
 
 	resource.ParallelTest(t, testCase)
 }
 
 func (td TestData) runAcceptanceSequentialTest(t *testing.T, testCase resource.TestCase) {
 	testCase.ExternalProviders = td.externalProviders()
-	testCase.ProviderFactories = td.providers()
+	testCase.ProtoV6ProviderFactories = td.providers()
 
 	resource.Test(t, testCase)
 }
 
-func (td TestData) providers() map[string]func() (*schema.Provider, error) {
-	return map[string]func() (*schema.Provider, error){
-		"azurerm": func() (*schema.Provider, error) { //nolint:unparam
-			azurerm := provider.TestAzureProvider()
-			return azurerm, nil
-		},
-		"azurerm-alt": func() (*schema.Provider, error) { //nolint:unparam
-			azurerm := provider.TestAzureProvider()
-			return azurerm, nil
-		},
+func (td TestData) providers() map[string]func() (tfprotov6.ProviderServer, error) {
+	return map[string]func() (tfprotov6.ProviderServer, error){
+		"azurerm":     providerserver.NewProtocol6WithError(provider.AzureProvider()),
+		"azurerm-alt": providerserver.NewProtocol6WithError(provider.AzureProvider()),
 	}
 }
 
