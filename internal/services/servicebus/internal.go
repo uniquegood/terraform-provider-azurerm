@@ -3,6 +3,7 @@ package servicebus
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespacesauthorizationrule"
 	"log"
 	"strings"
 	"time"
@@ -12,35 +13,56 @@ import (
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
 )
 
-func expandAuthorizationRuleRights(d *pluginsdk.ResourceData) *[]servicebus.AccessRights {
-	rights := make([]servicebus.AccessRights, 0)
+func expandAuthorizationRuleRights(d *pluginsdk.ResourceData) *[]namespacesauthorizationrule.AccessRights {
+	rights := make([]namespacesauthorizationrule.AccessRights, 0)
 
 	if d.Get("listen").(bool) {
-		rights = append(rights, servicebus.AccessRightsListen)
+		rights = append(rights, namespacesauthorizationrule.AccessRightsListen)
 	}
 
 	if d.Get("send").(bool) {
-		rights = append(rights, servicebus.AccessRightsSend)
+		rights = append(rights, namespacesauthorizationrule.AccessRightsSend)
 	}
 
 	if d.Get("manage").(bool) {
-		rights = append(rights, servicebus.AccessRightsManage)
+		rights = append(rights, namespacesauthorizationrule.AccessRightsManage)
 	}
 
 	return &rights
 }
 
-func flattenAuthorizationRuleRights(rights *[]servicebus.AccessRights) (listen, send, manage bool) {
+//func flattenAuthorizationRuleRightsGeneric[T comparable](rights *[]namespacesauthorizationrule.AccessRights) (listen, send, manage bool) {
+//	// zero (initial) value for a bool in go is false
+//
+//	if rights != nil {
+//		for _, right := range *rights {
+//			switch right {
+//			case namespacesauthorizationrule.AccessRightsListen:
+//				listen = true
+//			case namespacesauthorizationrule.AccessRightsSend:
+//				send = true
+//			case namespacesauthorizationrule.AccessRightsManage:
+//				manage = true
+//			default:
+//				log.Printf("[DEBUG] Unknown Authorization Rule Right '%s'", right)
+//			}
+//		}
+//	}
+//
+//	return listen, send, manage
+//}
+
+func flattenAuthorizationRuleRights(rights *[]namespacesauthorizationrule.AccessRights) (listen, send, manage bool) {
 	// zero (initial) value for a bool in go is false
 
 	if rights != nil {
 		for _, right := range *rights {
 			switch right {
-			case servicebus.AccessRightsListen:
+			case namespacesauthorizationrule.AccessRightsListen:
 				listen = true
-			case servicebus.AccessRightsSend:
+			case namespacesauthorizationrule.AccessRightsSend:
 				send = true
-			case servicebus.AccessRightsManage:
+			case namespacesauthorizationrule.AccessRightsManage:
 				manage = true
 			default:
 				log.Printf("[DEBUG] Unknown Authorization Rule Right '%s'", right)

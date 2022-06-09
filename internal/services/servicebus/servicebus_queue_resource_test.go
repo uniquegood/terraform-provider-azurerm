@@ -3,12 +3,12 @@ package servicebus_test
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/queues"
 	"testing"
 
 	"github.com/hashicorp/terraform-provider-azurerm/internal/acceptance"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/acceptance/check"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/parse"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
 	"github.com/hashicorp/terraform-provider-azurerm/utils"
 )
@@ -354,17 +354,17 @@ func TestAccServiceBusQueue_status(t *testing.T) {
 }
 
 func (t ServiceBusQueueResource) Exists(ctx context.Context, clients *clients.Client, state *pluginsdk.InstanceState) (*bool, error) {
-	id, err := parse.QueueID(state.ID)
+	id, err := queues.ParseQueueID(state.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := clients.ServiceBus.QueuesClient.Get(ctx, id.ResourceGroup, id.NamespaceName, id.Name)
+	resp, err := clients.ServiceBus.QueuesClient.Get(ctx, *id)
 	if err != nil {
-		return nil, fmt.Errorf("reading Service Bus NameSpace Queue (%s): %+v", id.String(), err)
+		return nil, fmt.Errorf("retrieving %s: %+v", *id, err)
 	}
 
-	return utils.Bool(resp.ID != nil), nil
+	return utils.Bool(resp.Model != nil), nil
 }
 
 func (ServiceBusQueueResource) basic(data acceptance.TestData) string {
