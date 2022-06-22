@@ -5,10 +5,11 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-azure-helpers/lang/response"
+	"github.com/hashicorp/go-azure-sdk/resource-manager/servicebus/2021-06-01-preview/namespaces"
+	"github.com/hashicorp/go-azure-sdk/resource-manager/servicebus/2021-06-01-preview/namespacesauthorizationrule"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/tf"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/parse"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespacesauthorizationrule"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/validate"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/timeouts"
@@ -64,12 +65,12 @@ func resourceServiceBusNamespaceAuthorizationRuleCreateUpdate(d *pluginsdk.Resou
 	ctx, cancel := timeouts.ForCreateUpdate(meta.(*clients.Client).StopContext, d)
 	defer cancel()
 
-	namespaceId, err := namespacesauthorizationrule.ParseNamespaceID(d.Get("namespace_id").(string))
+	namespaceAuthId, err := namespacesauthorizationrule.ParseNamespaceID(d.Get("namespace_id").(string))
 	if err != nil {
 		return err
 	}
 
-	id := namespacesauthorizationrule.NewAuthorizationRuleID(namespaceId.SubscriptionId, namespaceId.ResourceGroupName, namespaceId.NamespaceName, d.Get("name").(string))
+	id := namespacesauthorizationrule.NewAuthorizationRuleID(namespaceAuthId.SubscriptionId, namespaceAuthId.ResourceGroupName, namespaceAuthId.NamespaceName, d.Get("name").(string))
 
 	if d.IsNewResource() {
 		existing, err := client.NamespacesGetAuthorizationRule(ctx, id)
@@ -97,7 +98,8 @@ func resourceServiceBusNamespaceAuthorizationRuleCreateUpdate(d *pluginsdk.Resou
 
 	d.SetId(id.ID())
 
-	if err := waitForPairedNamespaceReplication(ctx, meta, id.ResourceGroupName, id.NamespaceName, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
+	namespaceId := namespaces.NewNamespaceID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName)
+	if err := waitForPairedNamespaceReplication(ctx, meta, namespaceId, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
 		return fmt.Errorf("waiting for replication to complete for %s: %+v", id, err)
 	}
 
@@ -166,7 +168,8 @@ func resourceServiceBusNamespaceAuthorizationRuleDelete(d *pluginsdk.ResourceDat
 		return fmt.Errorf("deleting %s: %+v", id, err)
 	}
 
-	if err := waitForPairedNamespaceReplication(ctx, meta, id.ResourceGroupName, id.NamespaceName, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
+	namespaceId := namespaces.NewNamespaceID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName)
+	if err := waitForPairedNamespaceReplication(ctx, meta, namespaceId, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
 		return fmt.Errorf("waiting for replication to complete for %s: %+v", *id, err)
 	}
 

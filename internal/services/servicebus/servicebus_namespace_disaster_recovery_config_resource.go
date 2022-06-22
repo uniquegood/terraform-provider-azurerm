@@ -3,13 +3,13 @@ package servicebus
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/go-azure-helpers/lang/response"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/disasterrecoveryconfigs"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/go-azure-helpers/lang/response"
+	"github.com/hashicorp/go-azure-sdk/resource-manager/servicebus/2021-06-01-preview/disasterrecoveryconfigs"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/azure"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/tf"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
@@ -280,7 +280,7 @@ func resourceServiceBusNamespaceDisasterRecoveryConfigDelete(d *pluginsdk.Resour
 				return resp, "Error", fmt.Errorf("checking for the status of %s: %+v", *id, err)
 			}
 
-			return resp, string(resp.HttpResponse.Status), nil
+			return resp, resp.HttpResponse.Status, nil
 		},
 	}
 
