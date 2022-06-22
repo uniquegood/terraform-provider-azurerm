@@ -2,14 +2,13 @@ package servicebus
 
 import (
 	"fmt"
-	"github.com/hashicorp/go-azure-helpers/lang/response"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespaces"
-	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/queues"
 	"time"
 
+	"github.com/hashicorp/go-azure-helpers/lang/response"
 	"github.com/hashicorp/go-azure-helpers/resourcemanager/resourcegroups"
-
 	"github.com/hashicorp/terraform-provider-azurerm/internal/clients"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespaces"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/queues"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/validate"
 	azValidate "github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/validate"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/tf/pluginsdk"
@@ -179,7 +178,7 @@ func dataSourceServiceBusQueueRead(d *pluginsdk.ResourceData, meta interface{}) 
 				// If the queue is NOT in a premium namespace (ie. it is Basic or Standard) and partitioning is enabled
 				// then the max size returned by the API will be 16 times greater than the value set.
 				if *props.EnablePartitioning {
-					namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClientP
+					namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClient
 					namespace, err := namespacesClient.Get(ctx, *namespaceId)
 					if err != nil {
 						return err

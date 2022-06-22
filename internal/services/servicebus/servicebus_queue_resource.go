@@ -245,7 +245,7 @@ func resourceServiceBusQueueCreateUpdate(d *pluginsdk.ResourceData, meta interfa
 
 	// We need to retrieve the namespace because Premium namespace works differently from Basic and Standard,
 	// so it needs different rules applied to it.
-	namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClientP
+	namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClient
 	namespace, err := namespacesClient.Get(ctx, *namespaceId)
 	if err != nil {
 		return fmt.Errorf("retrieving %s: %+v", *namespaceId, err)
@@ -325,7 +325,7 @@ func resourceServiceBusQueueRead(d *pluginsdk.ResourceData, meta interface{}) er
 				// If the queue is NOT in a premium namespace (ie. it is Basic or Standard) and partitioning is enabled
 				// then the max size returned by the API will be 16 times greater than the value set.
 				if *props.EnablePartitioning {
-					namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClientP
+					namespacesClient := meta.(*clients.Client).ServiceBus.NamespacesClient
 					namespace, err := namespacesClient.Get(ctx, namespaceId)
 					if err != nil {
 						return err

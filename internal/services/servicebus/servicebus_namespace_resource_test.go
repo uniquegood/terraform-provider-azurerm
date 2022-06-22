@@ -212,7 +212,7 @@ func (t ServiceBusNamespaceResource) Exists(ctx context.Context, clients *client
 		return nil, err
 	}
 
-	resp, err := clients.ServiceBus.NamespacesClientP.Get(ctx, *id)
+	resp, err := clients.ServiceBus.NamespacesClient.Get(ctx, *id)
 	if err != nil {
 		return nil, fmt.Errorf("reading Service Bus NameSpace (%s): %+v", id.String(), err)
 	}

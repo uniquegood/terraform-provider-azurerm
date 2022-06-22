@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	legacyIdentity "github.com/hashicorp/terraform-provider-azurerm/internal/identity"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespaces"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespacesauthorizationrule"
 	"log"
 	"strings"
 	"time"
@@ -176,7 +177,7 @@ func resourceServiceBusNamespace() *pluginsdk.Resource {
 }
 
 func resourceServiceBusNamespaceCreateUpdate(d *pluginsdk.ResourceData, meta interface{}) error {
-	client := meta.(*clients.Client).ServiceBus.NamespacesClientP
+	client := meta.(*clients.Client).ServiceBus.NamespacesClient
 	subscriptionId := meta.(*clients.Client).Account.SubscriptionId
 	ctx, cancel := timeouts.ForCreateUpdate(meta.(*clients.Client).StopContext, d)
 	defer cancel()
@@ -243,8 +244,8 @@ func resourceServiceBusNamespaceCreateUpdate(d *pluginsdk.ResourceData, meta int
 }
 
 func resourceServiceBusNamespaceRead(d *pluginsdk.ResourceData, meta interface{}) error {
-	client := meta.(*clients.Client).ServiceBus.NamespacesClientP
-	clientStable := meta.(*clients.Client).ServiceBus.NamespacesClient
+	client := meta.(*clients.Client).ServiceBus.NamespacesClient
+	namespaceAuthClient := meta.(*clients.Client).ServiceBus.NamespacesAuthClient
 	ctx, cancel := timeouts.ForRead(meta.(*clients.Client).StopContext, d)
 	defer cancel()
 
@@ -304,21 +305,24 @@ func resourceServiceBusNamespaceRead(d *pluginsdk.ResourceData, meta interface{}
 		}
 	}
 
-	keys, err := clientStable.ListKeys(ctx, id.ResourceGroupName, id.NamespaceName, serviceBusNamespaceDefaultAuthorizationRule)
+	authRuleId := namespacesauthorizationrule.NewAuthorizationRuleID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName, serviceBusNamespaceDefaultAuthorizationRule)
+
+	keys, err := namespaceAuthClient.NamespacesListKeys(ctx, authRuleId)
 	if err != nil {
 		log.Printf("[WARN] listing default keys for %s: %+v", id, err)
 	} else {
-		d.Set("default_primary_connection_string", keys.PrimaryConnectionString)
-		d.Set("default_secondary_connection_string", keys.SecondaryConnectionString)
-		d.Set("default_primary_key", keys.PrimaryKey)
-		d.Set("default_secondary_key", keys.SecondaryKey)
+		if keysModel := keys.Model; keysModel != nil {
+			d.Set("default_primary_connection_string", keysModel.PrimaryConnectionString)
+			d.Set("default_secondary_connection_string", keysModel.SecondaryConnectionString)
+			d.Set("default_primary_key", keysModel.PrimaryKey)
+			d.Set("default_secondary_key", keysModel.SecondaryKey)
+		}
 	}
-
 	return nil
 }
 
 func resourceServiceBusNamespaceDelete(d *pluginsdk.ResourceData, meta interface{}) error {
-	client := meta.(*clients.Client).ServiceBus.NamespacesClientP
+	client := meta.(*clients.Client).ServiceBus.NamespacesClient
 	ctx, cancel := timeouts.ForDelete(meta.(*clients.Client).StopContext, d)
 	defer cancel()
 

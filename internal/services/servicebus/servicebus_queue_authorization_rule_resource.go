@@ -2,6 +2,7 @@ package servicebus
 
 import (
 	"fmt"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespaces"
 	"log"
 	"time"
 
@@ -96,8 +97,8 @@ func resourceServiceBusQueueAuthorizationRuleCreateUpdate(d *pluginsdk.ResourceD
 	}
 
 	d.SetId(id.ID())
-
-	if err := waitForPairedNamespaceReplication(ctx, meta, id.ResourceGroupName, id.NamespaceName, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
+	namespaceId := namespaces.NewNamespaceID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName)
+	if err := waitForPairedNamespaceReplication(ctx, meta, namespaceId, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
 		return fmt.Errorf("waiting for replication to complete for %s: %+v", id, err)
 	}
 
@@ -167,7 +168,8 @@ func resourceServiceBusQueueAuthorizationRuleDelete(d *pluginsdk.ResourceData, m
 		return fmt.Errorf("deleting %s: %+v", id, err)
 	}
 
-	if err := waitForPairedNamespaceReplication(ctx, meta, id.ResourceGroupName, id.NamespaceName, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
+	namespaceId := namespaces.NewNamespaceID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName)
+	if err := waitForPairedNamespaceReplication(ctx, meta, namespaceId, d.Timeout(pluginsdk.TimeoutUpdate)); err != nil {
 		return fmt.Errorf("waiting for replication to complete for %s: %+v", *id, err)
 	}
 

@@ -3,6 +3,8 @@ package servicebus
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/disasterrecoveryconfigs"
+	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespaces"
 	"github.com/hashicorp/terraform-provider-azurerm/internal/services/servicebus/sdk/2021-06-01-preview/namespacesauthorizationrule"
 	"log"
 	"strings"
@@ -138,16 +140,22 @@ func authorizationRuleCustomizeDiff(ctx context.Context, d *pluginsdk.ResourceDi
 	return nil
 }
 
-func waitForPairedNamespaceReplication(ctx context.Context, meta interface{}, resourceGroup, namespaceName string, timeout time.Duration) error {
+func waitForPairedNamespaceReplication(ctx context.Context, meta interface{}, id namespaces.NamespaceId, timeout time.Duration) error {
 	namespaceClient := meta.(*clients.Client).ServiceBus.NamespacesClient
-	namespace, err := namespaceClient.Get(ctx, resourceGroup, namespaceName)
+	resp, err := namespaceClient.Get(ctx, id)
 
-	if !strings.EqualFold(string(namespace.Sku.Name), "Premium") {
-		return err
+	if model := resp.Model; model != nil {
+		if !strings.EqualFold(string(model.Sku.Name), "Premium") {
+			return err
+		}
 	}
 
 	disasterRecoveryClient := meta.(*clients.Client).ServiceBus.DisasterRecoveryConfigsClient
-	disasterRecoveryResponse, err := disasterRecoveryClient.List(ctx, resourceGroup, namespaceName)
+	disasterRecoveryNamespaceId := disasterrecoveryconfigs.NewNamespaceID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName)
+	disasterRecoveryResponse, err := disasterRecoveryClient.List(ctx, disasterRecoveryNamespaceId)
+	if model := disasterRecoveryResponse.Model; model != nil {
+
+	}
 	if disasterRecoveryResponse.Values() == nil {
 		return err
 	}
