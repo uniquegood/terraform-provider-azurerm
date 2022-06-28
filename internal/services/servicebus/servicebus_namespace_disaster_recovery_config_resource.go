@@ -198,7 +198,7 @@ func resourceServiceBusNamespaceDisasterRecoveryConfigRead(d *pluginsdk.Resource
 		}
 	}
 
-	authRuleId := disasterrecoveryconfigs.NewDisasterRecoveryConfigAuthorizationRuleID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName, id.Alias, id.Alias)
+	authRuleId := disasterrecoveryconfigs.NewAuthorizationRuleID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName, id.Alias)
 
 	keys, err := client.ListKeys(ctx, authRuleId)
 

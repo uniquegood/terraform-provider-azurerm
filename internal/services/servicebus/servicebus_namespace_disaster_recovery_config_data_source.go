@@ -124,7 +124,7 @@ func dataSourceServiceBusNamespaceDisasterRecoveryConfigRead(d *pluginsdk.Resour
 
 	d.SetId(id.ID())
 
-	authRuleId := disasterrecoveryconfigs.NewDisasterRecoveryConfigAuthorizationRuleID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName, id.Alias, d.Get("name").(string))
+	authRuleId := disasterrecoveryconfigs.NewAuthorizationRuleID(id.SubscriptionId, id.ResourceGroupName, id.NamespaceName, d.Get("name").(string))
 	keys, err := client.ListKeys(ctx, authRuleId)
 	if err != nil {
 		log.Printf("[WARN] listing default keys for %s: %+v", id, err)
